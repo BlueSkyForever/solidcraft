@@ -39,7 +39,7 @@ mod join_pieces;
 pub(crate) use face::{FaceRefForm, face_ref_form};
 pub(crate) use features::profiles as feature_profiles;
 pub(crate) use features::{EdgeRefForm, axis_dir_form, edge_ref_form, sketch_key};
-pub use features::{auto_operation, extrude_reach, shown_scope};
+pub use features::{auto_operation, extrude_reach, join_face_body, scope_bodies, shown_scope};
 pub use join_pieces::{Addition, addition};
 pub use sketch::dimension_roles;
 pub use sketch_import::drawing_import_command;
