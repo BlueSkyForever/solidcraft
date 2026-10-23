@@ -53,6 +53,13 @@ pub(crate) fn reveal_in_history(app: &mut SolveApp, id: u64) {
     app.tree.reveal_feature = Some(Reveal { id, path: Vec::new() });
 }
 
+/// How many features the folder lists: those before the history marker (an editor rolls the
+/// model back), but the history layout lists them all, with the marker among them.
+fn shown_features(app: &SolveApp, compact: bool) -> usize {
+    let n = app.session.doc.features.len();
+    if compact { n } else { app.session.doc.marker.unwrap_or(n) }
+}
+
 pub(super) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, component: u64, path: &[u64], depth: usize, acts: &mut Actions) {
     // Compact history: every feature of the component, sketches too, in history order with the
     // marker, in place of the timeline.
@@ -64,6 +71,7 @@ pub(super) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, component: u64, path: 
             .doc
             .features
             .iter()
+            .take(shown_features(app, compact))
             .any(|feature| feature.component == component && (compact || !matches!(feature.kind, FeatureKind::Sketch { .. }))),
     };
     if !has_features {
@@ -102,6 +110,7 @@ pub(super) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, component: u64, path: 
             .doc
             .features
             .iter()
+            .take(shown_features(app, compact))
             .enumerate()
             .filter_map(|(i, f)| (f.component == component && (compact || !matches!(f.kind, FeatureKind::Sketch { .. }))).then_some(i))
             .collect(),
@@ -344,6 +353,22 @@ mod tests {
         assert_eq!(h.app.session.visibility.hidden_bodies, ["Plate"]);
         h.step(&json!({"click":{"handle":"eye:Box1"}})).unwrap();
         assert!(h.app.session.visibility.hidden_bodies.is_empty());
+    }
+
+    #[test]
+    fn browser_feature_rows_roll_back_with_the_model() {
+        let mut h = Harness::new();
+        for name in ["Before", "After"] {
+            h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"name":name})).unwrap();
+        }
+        h.app.run("timeline.roll_to", json!({"position":1})).unwrap();
+        for cache in ["current", "missing", "stale"] {
+            assert_eq!(feature_rows(&mut h, cache), ["Features", "Before"], "{cache}");
+        }
+        h.app.run("timeline.roll_to", json!({})).unwrap();
+        for cache in ["current", "missing", "stale"] {
+            assert_eq!(feature_rows(&mut h, cache), ["Features", "Before", "After"], "{cache}");
+        }
     }
 
     #[test]
