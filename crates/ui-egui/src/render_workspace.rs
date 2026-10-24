@@ -479,9 +479,7 @@ pub fn enter(app: &mut SolveApp, render: bool) -> Result<(), String> {
             app.render_workspace.design_camera = Some((app.cam, app.ui.perspective));
             app.ui.tab = "RENDER".into();
             let scene = solidcraft_engine::product_scene::extract(&app.session).map_err(|e| e.to_string())?;
-            if !scene.bounds.is_empty() {
-                app.cam.fit(&scene.bounds);
-            }
+            app.cam.fit_aspect(&scene.bounds, image_aspect(&app.render_workspace.view.draft));
         }
         setups::refresh_dirty(app);
         if app.render_workspace.revision != app.session.revision && !app.render_workspace.view.dirty {
@@ -1541,6 +1539,20 @@ fn hash_surface(surface: Option<solidcraft_engine::render::surface::OpaqueSurfac
     }
 }
 
+/// The image's width over its height.
+pub fn image_aspect(setup: &RenderSetup) -> f64 {
+    f64::from(setup.width.max(1)) / f64::from(setup.height.max(1))
+}
+
+/// Where the image of `setup` shows in a viewport of `rect`: the largest rectangle of the
+/// image's aspect centred in it. The preview draws there, at the image's aspect, so it shows
+/// exactly what Export PNG writes; the rest of the viewport is a matte around the picture.
+pub fn image_frame(rect: egui::Rect, setup: &RenderSetup) -> egui::Rect {
+    let aspect = image_aspect(setup) as f32;
+    let (w, h) = if rect.width() > rect.height() * aspect { (rect.height() * aspect, rect.height()) } else { (rect.width(), rect.width() / aspect) };
+    egui::Rect::from_center_size(rect.center(), egui::vec2(w.max(1.0), h.max(1.0)))
+}
+
 /// The size the product preview draws at for a viewport of `full` physical pixels: the full
 /// size when the viewport executor admits it, else the largest size at the same aspect it does.
 /// Without an executor the request is left for resolution to report.
@@ -1554,14 +1566,20 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         return;
     }
     let rect = ui.max_rect();
-    app.viewport.rect = Some(rect);
+    // The picture is the image's frame; the viewport around it is a matte. The frame is the
+    // canvas the camera input, the navigator and the control channel see, so the pointer maps
+    // through the picture's own projection (zoom to the cursor lands where it points) and a
+    // drag may start anywhere in the viewport.
+    let frame = image_frame(rect, &app.render_workspace.view.draft);
+    app.viewport.rect = Some(frame);
     crate::viewport::refresh_layout(app, ui.ctx().pixels_per_point());
     let response = ui.interact(rect, ui.id().with("render_preview"), Sense::click_and_drag());
     // The modelling viewport's camera input (preset, Orbit around, zoom to the cursor, middle
     // double-click), with nothing to pick or select here.
-    crate::navigation::handle(app, ui, rect, &response, crate::navigation::NavCaps::RENDER);
+    crate::navigation::handle(app, ui, frame, &response, crate::navigation::NavCaps::RENDER);
     let bg = app.render_workspace.view.draft.background;
-    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
+    ui.painter().rect_filled(rect, 0.0, Tokens::get().panel);
+    ui.painter().rect_filled(frame, 0.0, Color32::from_rgb(bg[0], bg[1], bg[2]));
     let result = (|| -> Result<(), String> {
         if app.viewport.gpu.is_none() {
             return Err("GPU product preview is unavailable on this host. Saved setups remain available.".into());
@@ -1576,7 +1594,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         // A 4K or 5K viewport is past the preview's pixel budget: draw it smaller and filter it
         // up into the viewport rather than refusing the frame.
-        let full = ((rect.width() * ppp).max(1.0) as u64, (rect.height() * ppp).max(1.0) as u64);
+        let full = ((frame.width() * ppp).max(1.0) as u64, (frame.height() * ppp).max(1.0) as u64);
         let (width, height) = preview_size(app.session.render_viewport(), full);
         let mut request = RenderRequest {
             backend: Some(setup.backend.clone()),
@@ -1620,9 +1638,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             pv_key: 0,
             pv_slot: slot,
             pv_hide: false,
-            view_proj: camera.view_proj(f64::from(rect.width() / rect.height().max(1.0)), radius).to_f32(),
+            view_proj: camera.view_proj(f64::from(frame.width() / frame.height().max(1.0)), radius).to_f32(),
             back: camera.back().to_f32(),
-            size_px: [rect.width() * ppp, rect.height() * ppp],
+            size_px: [frame.width() * ppp, frame.height() * ppp],
             clip: [0.0; 4],
             cap: [0.0; 4],
             images: Vec::new(),
@@ -1637,13 +1655,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             hover_tint: [0.0; 3],
             selection_tint: [0.0; 3],
         });
-        ui.painter().add(egui_wgpu::Callback::new_paint_callback(rect, callback));
+        ui.painter().add(egui_wgpu::Callback::new_paint_callback(frame, callback));
         Ok(())
     })();
     if let Err(error) = result {
         preview_error(app, ui, rect, &error);
     }
-    crate::viewport::axis_view(app, ui, rect);
+    crate::viewport::axis_view(app, ui, frame);
 }
 
 pub(crate) fn interactive_command_info(app: &SolveApp, command: &solidcraft_engine::CommandSpec) -> solidcraft_engine::CommandInfo {

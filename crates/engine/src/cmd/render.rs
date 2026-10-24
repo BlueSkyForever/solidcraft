@@ -44,7 +44,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("render.camera.get", "Inspect Render Camera", get_camera).icon("camera").noundo()
         .params("No parameters. Returns the explicitly defined current view camera, or null if the session has no camera override. No camera is fitted, no job is started and no saved setup or engineering document is changed."),
 CommandSpec::new("render.camera.fit", "Frame Render Subject", fit_camera).icon("camera").noundo()
-    .params("No parameters. Fits the current camera to the visible product bounds through the shared Camera::fit contract; changes only view state, not a saved setup, rendering job, stage or engineering geometry."),
+    .params("aspect?: the picture's width over its height (default 1). Fits the current camera to the visible product bounds through the shared Camera::fit contract, moving back for a picture taller than wide so its sides hold the product too; changes only view state, not a saved setup, rendering job, stage or engineering geometry."),
 CommandSpec::new("render.preset.resolve", "Review Native Studio", studio_presets::resolve).icon("render_scene").noundo()
     .params("id: NATIVE-STUDIO-001..025; name; set?: typed GPU setup patch; expected_revision?:u64. Resolves original built-in HDR/rig/passive ground with conservative geometry clearance, returns all replacements and preserved fields without mutation. Unbound SCENE-* concepts are not accepted."),
 CommandSpec::new("render.preset.apply", "Apply Native Studio", studio_presets::apply).icon("render_scene")
@@ -137,14 +137,17 @@ fn get_camera(s: &mut Session, params: &Value) -> Result<Value> {
 }
 
 fn fit_camera(s: &mut Session, params: &Value) -> Result<Value> {
-    if !params.as_object().is_some_and(|p| p.is_empty()) {
-        return Err(bad("render.camera.fit", "expected an empty parameter object"));
-    }
+    let aspect = match params.as_object() {
+        Some(p) if p.is_empty() => 1.0,
+        Some(p) if p.len() == 1 && p.contains_key("aspect") => match p["aspect"].as_f64() {
+            Some(a) if a.is_finite() && a > 0.0 => a,
+            _ => return Err(bad("render.camera.fit", "aspect must be a positive number: the picture's width over its height")),
+        },
+        _ => return Err(bad("render.camera.fit", "expected an empty parameter object or {aspect}")),
+    };
     let scene = crate::product_scene::extract(s)?;
     let mut camera = s.camera.unwrap_or_default();
-    if !scene.bounds.is_empty() {
-        camera.fit(&scene.bounds);
-    }
+    camera.fit_aspect(&scene.bounds, aspect);
     s.camera = Some(camera);
     Ok(json!({"camera":camera,"empty":scene.bounds.is_empty(),"document_changed":false}))
 }

@@ -458,6 +458,21 @@ impl Camera {
         let r = (b.diagonal() * 0.5).max(1.0);
         self.distance = if self.fov > 0.0 { r / (self.fov * 0.5).sin() * 1.1 } else { r / 0.4 * 1.15 };
     }
+    /// [`Camera::fit`] for a picture of `aspect` (width over height). The fit frames the
+    /// bounding sphere by the picture's height; a picture taller than wide also needs it inside
+    /// the sides, so the camera moves back by the ratio (the orthographic width grows with the
+    /// distance; in perspective the sphere's angular radius shrinks with it, which the fit's
+    /// margin covers). A wide picture, or an aspect that is not a positive number, keeps the
+    /// plain fit; nothing to fit leaves the camera alone.
+    pub fn fit_aspect(&mut self, b: &Aabb3, aspect: f64) {
+        if b.is_empty() {
+            return;
+        }
+        self.fit(b);
+        if aspect.is_finite() && aspect > 0.0 && aspect < 1.0 {
+            self.distance /= aspect;
+        }
+    }
     /// The same camera looking from direction `back` (target → eye). Straight up or down
     /// keeps the yaw, rounded to the nearest quarter turn so the view stays square.
     pub fn looking_from(&self, back: Vec3) -> Camera {
