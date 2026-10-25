@@ -77,6 +77,8 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui_kit::text(ui, crate::i18n::tr("nav.free_orbit_upright.help"), ui_kit::Text::Hint("free_orbit_upright"));
             }
         }
+        let wrap = setting::orbit_cursor_wrap(app, ui).on_hover_text(crate::i18n::tr("nav.orbit_cursor_wrap.help"));
+        crate::scenario::publish_target("prefs:orbit_cursor_wrap", wrap.rect);
         let help = if app.preferences.nav == TOUCHPAD_NAV {
             app.tr("nav.touchpad.help").to_owned()
         } else if !app.preferences.free_orbit && app.preferences.nav != OPENSCAD_NAV {
