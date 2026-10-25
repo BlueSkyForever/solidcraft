@@ -320,6 +320,8 @@ pub struct SolvedSketch {
     pub sketch: solidcraft_sketch::Sketch,
     pub report: SolveReport,
     pub profiles: Vec<Profile>,
+    /// Planar closed loops the 3D sketch curves take part in, in planes of their own (#741).
+    pub profiles_3d: Vec<solidcraft_sketch::Profile3D>,
     /// Open and untied ends of its profile curves (where a profile can fail).
     pub ends: solidcraft_sketch::EndReport,
 }
@@ -1801,6 +1803,7 @@ impl Model {
             name: last.name.clone(),
             plane: last.plane,
             profiles: find_profiles(&sketch),
+            profiles_3d: solidcraft_sketch::find_planar_3d_profiles(&sketch, last.plane),
             ends: solidcraft_sketch::loose_ends(&sketch),
             sketch,
             report,
@@ -6769,9 +6772,10 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             sk.validate_periodic_splines()?;
             let profiles = find_profiles(&sk);
+            let profiles_3d = solidcraft_sketch::find_planar_3d_profiles(&sk, plane);
             let ends = solidcraft_sketch::loose_ends(&sk);
             st.sketches.retain(|s| s.feature != f.id);
-            st.sketches.push(Arc::new(SolvedSketch { feature: f.id, name: f.name.clone(), plane, sketch: sk, report, profiles, ends }));
+            st.sketches.push(Arc::new(SolvedSketch { feature: f.id, name: f.name.clone(), plane, sketch: sk, report, profiles, profiles_3d, ends }));
             Ok(())
         }
         FeatureKind::Extrude { operation, targets, .. }

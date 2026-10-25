@@ -32,6 +32,7 @@ mod offset_topology;
 mod pattern;
 mod periodic;
 mod profiles;
+mod profiles3d;
 #[cfg(feature = "solver-profiling")]
 pub mod profiling;
 mod shape;
@@ -63,6 +64,7 @@ pub use profiles::{
     CurvePick, Profile, distinct_curves, find_drawn_profiles, find_profiles, merge_regions, profile_at_point, profile_by_curves,
     without_text_counters,
 };
+pub use profiles3d::{Profile3D, find_planar_3d_profiles};
 pub use shape::{Shape, intersections, intersections_within, nearest_crossing, nearest_curve_intersection};
 pub use solver::solve_after_edit_with_analysis;
 pub use solver::{
