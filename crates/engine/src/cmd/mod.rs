@@ -60,6 +60,7 @@ mod measure_shape;
 mod mesh;
 mod metadata;
 pub(crate) mod motion;
+mod notes;
 mod parts;
 mod script;
 mod section;
@@ -301,6 +302,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(parts::COMMANDS.iter());
     v.extend(bom::COMMANDS.iter());
     v.extend(browser::COMMANDS.iter());
+    v.extend(notes::COMMANDS.iter());
     v.extend(delete::COMMANDS.iter());
     v.extend(edit::COMMANDS.iter());
     v.extend(clipboard::COMMANDS.iter());

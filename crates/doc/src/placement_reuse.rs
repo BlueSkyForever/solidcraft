@@ -136,6 +136,7 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         browser_order,
         named_views,
         visibility,
+        notes: _,
     } = a;
     (Arc::ptr_eq(render, &b.render) || *render == b.render)
         && *format == b.format
