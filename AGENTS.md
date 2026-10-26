@@ -204,6 +204,18 @@ before the draft is verified.
   values never come from a commercial CAD product.
 - Build with `CARGO_TARGET_DIR=<repo>/target`. Windows: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
+## ACP/MCP authentication
+
+- Preserve existing local changes before editing ACP, MCP or authentication code.
+- Trace the token writer and CLI token lookup paths, including `SOLIDCRAFT_CONTROL_DIR` and
+  `XDG_DATA_HOME`, before changing authentication behavior.
+- Never pass a control token to the ACP agent or place it in MCP arguments or logs.
+- Run builds serially; do not start concurrent Cargo builds. Do not run `cargo clean` without
+  explicit authorization.
+- Validate the bridge with a real read-only MCP tool call through a new ACP session, and inspect
+  its result before declaring the correction complete. `initialize` and `tools/list` alone do not
+  validate control-channel authentication.
+
 ## Roadmap
 `ROADMAP.md` (committed) tracks status, milestones and estimates. Update it whenever a
 milestone task lands. `docs/features.md` (SolidCraft's commands by area, from the registry) and
