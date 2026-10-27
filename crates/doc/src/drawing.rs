@@ -41,6 +41,8 @@ use crate::format::DRAWING;
 use crate::ids::{self, IdSource};
 use crate::{DocError, Metadata, Result, expr};
 
+pub mod hole_callout;
+
 /// The most sheets a drawing may have.
 pub const MAX_SHEETS: usize = 1000;
 /// The most designs a drawing may draw.
