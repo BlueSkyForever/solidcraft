@@ -1120,8 +1120,19 @@ fn registered_product_camera_fit_changes_only_view_and_keeps_orientation() {
     assert_eq!(fitted["document_changed"], false);
     let after = s.camera.unwrap();
     assert_eq!((after.yaw, after.pitch, after.roll), (camera.yaw, camera.pitch, camera.roll));
+    // A picture taller than wide moves the camera back by the ratio, keeping the orientation
+    // and the target; a wide one is the plain fit.
+    let tall = s.execute("render.camera.fit", &json!({"aspect":0.5})).unwrap();
+    assert_eq!(tall["document_changed"], false);
+    let back = s.camera.unwrap();
+    assert!((back.distance - 2.0 * after.distance).abs() < 1e-9, "{} vs {}", back.distance, after.distance);
+    assert_eq!((back.yaw, back.pitch, back.roll, back.target), (after.yaw, after.pitch, after.roll, after.target));
+    s.execute("render.camera.fit", &json!({"aspect":2.0})).unwrap();
+    assert_eq!(s.camera.unwrap(), after);
     assert_eq!(s.doc.to_json(), doc);
     assert_eq!(s.undo.len(), undo);
+    assert!(s.execute("render.camera.fit", &json!({"aspect":0})).is_err());
+    assert!(s.execute("render.camera.fit", &json!({"aspect":"tall"})).is_err());
     assert!(s.execute("render.camera.fit", &json!({"scale":0})).is_err());
 }
 
