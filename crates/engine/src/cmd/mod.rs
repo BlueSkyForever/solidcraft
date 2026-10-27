@@ -53,6 +53,7 @@ pub(crate) mod inspect;
 mod interference;
 pub(crate) mod joints;
 mod libraries;
+pub mod macros;
 mod material_properties;
 mod materials;
 mod measure_sel;
@@ -67,6 +68,8 @@ pub(crate) use measure_sel::{measure_items, shape_of};
 pub(crate) use measure_shape::Shape;
 #[cfg(test)]
 mod kernel_heal_tests;
+#[cfg(test)]
+mod macros_tests;
 mod parameter_sweep;
 mod parameters;
 mod plastic;
@@ -315,6 +318,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(materials::COMMANDS.iter());
     v.extend(material_properties::COMMANDS.iter());
     v.extend(libraries::COMMANDS.iter());
+    v.extend(macros::COMMANDS.iter());
     v.extend(section::COMMANDS.iter());
     v.extend(view_navigation::COMMANDS.iter());
     v.extend(view_dxf::COMMANDS.iter());
