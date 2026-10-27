@@ -465,7 +465,10 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         )
     });
     let hover = hover.filter(|p| !crate::frame::dock_dragging(ui.ctx()) && !crate::shell::covered(app, *p));
-    let delta = unwrapped_delta(app, delta);
+    // While the navigator is dragged (`viewport::axis_view_orbit`) it owns the pointer and does
+    // its own cursor-wrap bookkeeping; the view's own drags do theirs here.
+    let navigator_drag = app.viewport.axis_drag.is_some();
+    let delta = if navigator_drag { delta } else { unwrapped_delta(app, delta) };
     // The right button belongs to the marking menu while it is open.
     let secondary_down = secondary_down && app.viewport.context_menu.is_none();
     // The axis view handles its own clicks; the model underneath must not see them.
@@ -678,11 +681,17 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
                 _ => {}
             }
         }
+        // A pan drag wraps like an orbit: a long pan needs no re-grab at the edge of the screen.
+        if mode == Some(NavMode::Pan) {
+            wrap_cursor(app, ui, rect);
+        }
     }
     if !dragging && motion.is_none() && !(trackpad_orbit && app.viewport.trackpad_gesture) {
         app.viewport.orbit_pivot = None;
         app.viewport.orbit_from = None;
-        app.viewport.cursor_wrap = None;
+        if !navigator_drag {
+            app.viewport.cursor_wrap = None;
+        }
     }
     if app.viewport.spin {
         // A click on the navigation bar (its own button) is not a stop.
@@ -714,16 +723,17 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     CameraInput { hover, scroll, mods, middle, secondary_down, primary_down, primary_pressed, delta, inside, axes, pinch, pan, primary_nav, mode }
 }
 
-/// How close to the view's edge (points) an orbit drag moves the cursor to the other side.
+/// How close to the view's edge (points) a drag moves the cursor to the other side.
 const WRAP_MARGIN: f32 = 4.0;
 
-/// An orbit drag that reaches the edge of the view keeps turning: the cursor moves to the other
-/// side of the view, so the drag can go on round the model as far as the user likes instead of
-/// stopping where the screen ends. One move at a time; the next waits until the pointer has
-/// reported the jump ([`unwrapped_delta`]). Where the cursor can't be moved (Wayland, the
-/// browser) the request does nothing, the jump never arrives and the drag stops at the edge. A
-/// synthetic drag (control channel, scripts) has no real cursor to move. With
-/// `orbit_cursor_wrap` off in the preferences the drag stops at the edge of the screen.
+/// An orbit or pan drag that reaches the edge of the view keeps going, a drag on the navigator
+/// (`viewport::axis_view_orbit`) too: the cursor moves to the other side of the view, so the drag
+/// can go on round the model, or across it, as far as the user likes instead of stopping where
+/// the screen ends. One move at a time; the next waits until the pointer has reported the jump
+/// ([`unwrapped_delta`]). Where the cursor can't be moved (Wayland, the browser) the request does
+/// nothing, the jump never arrives and the drag stops at the edge. A synthetic drag (control
+/// channel, scripts) has no real cursor to move. With `orbit_cursor_wrap` off in the preferences
+/// every drag stops at the edge of the screen.
 pub(crate) fn wrap_cursor(app: &mut SolveApp, ui: &egui::Ui, rect: Rect) {
     if !app.preferences.orbit_cursor_wrap || app.viewport.cursor_wrap.is_some() || app.synthetic_press {
         return;
@@ -755,8 +765,9 @@ pub(crate) fn wrapped(rect: Rect, at: Pos2) -> Option<Pos2> {
 }
 
 /// The pointer's motion this frame without the jump of a cursor wrap: the frame that reports it
-/// moves the camera only by what the hand did.
-fn unwrapped_delta(app: &mut SolveApp, delta: egui::Vec2) -> egui::Vec2 {
+/// moves the camera only by what the hand did. [`handle`] takes the view's drags through it, the
+/// navigator its own (`viewport::axis_view_orbit`).
+pub(crate) fn unwrapped_delta(app: &mut SolveApp, delta: egui::Vec2) -> egui::Vec2 {
     let Some(jump) = app.viewport.cursor_wrap else { return delta };
     if (delta - jump).length() < jump.length() * 0.5 {
         app.viewport.cursor_wrap = None;
@@ -1803,6 +1814,86 @@ mod tests {
         let before = app.cam.yaw;
         frame(&mut app, vec![Event::PointerMoved(pos2(54.0, 300.0))]);
         assert!((turn(before, app.cam.yaw) - step).abs() < step.abs() * 0.01, "and keeps turning the same way");
+        frame(&mut app, vec![Event::PointerButton { pos: pos2(54.0, 300.0), button, pressed: false, modifiers: mods }]);
+        frame(&mut app, vec![]);
+        assert_eq!(app.viewport.cursor_wrap, None);
+        // With the preference off, the same drag reaches the edge and the cursor stays there.
+        app.preferences.orbit_cursor_wrap = false;
+        frame(&mut app, vec![Event::PointerButton { pos: at, button, pressed: true, modifiers: mods }]);
+        for x in [620.0, 700.0, 780.0, 800.0, 806.0] {
+            assert!(frame(&mut app, vec![Event::PointerMoved(pos2(x, 300.0))]).is_empty(), "no cursor move with wrapping off ({x})");
+        }
+        assert_eq!(app.viewport.cursor_wrap, None);
+    }
+
+    /// A pan drag that reaches the edge of the view keeps going the same way: the cursor moves to
+    /// the other side, the frame that reports the jump pans the view only by the hand's motion,
+    /// and events from before the move don't ask for a second one. With `orbit_cursor_wrap` off
+    /// the cursor is never moved.
+    #[test]
+    fn a_pan_drag_at_the_edge_moves_the_cursor_across_and_keeps_panning() {
+        use crate::prefs::NavButton;
+        use egui::{Event, Modifiers, PointerButton, ViewportCommand, pos2, vec2};
+        use solidcraft_engine::geom::Vec3;
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("solid.box", &serde_json::json!({"length":40,"width":30,"height":20})).unwrap();
+        let mut app = crate::SolveApp::new(s, crate::Services::default());
+        let (button, mods) = [(PointerButton::Middle, NavButton::Middle), (PointerButton::Secondary, NavButton::Right)]
+            .into_iter()
+            .flat_map(|b| [Modifiers::NONE, Modifiers::CTRL].map(move |m| (b, m)))
+            .find(|((_, b), m)| crate::prefs::nav_mode(&app, *b, *m) == Some(crate::viewport::NavMode::Pan))
+            .map(|((p, _), m)| (p, m))
+            .expect("the default preset pans with the middle or right button");
+        let ctx = egui::Context::default();
+        let mut time = 0.0;
+        let mut frame = |app: &mut crate::SolveApp, events: Vec<Event>| {
+            time += 1.0 / 60.0;
+            let events = std::iter::once(Event::ModifiersChanged(mods)).chain(events).collect();
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 600.0))),
+                time: Some(time),
+                focused: true,
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(raw, |ui| {
+                let rect = ui.max_rect();
+                app.viewport.rect = Some(rect);
+                let resp = ui.interact(rect, ui.id().with("model"), egui::Sense::click_and_drag());
+                super::handle(app, ui, rect, &resp, super::NavCaps::MODEL);
+            });
+            out.textures_delta.clear();
+            let commands = out.viewport_output.remove(&egui::ViewportId::ROOT).map(|v| v.commands).unwrap_or_default();
+            commands.into_iter().filter_map(|c| if let ViewportCommand::CursorPosition(p) = c { Some(p) } else { None }).collect::<Vec<_>>()
+        };
+        let close = |moved: Vec3, want: Vec3| (moved - want).len() < want.len() * 0.01;
+        let at = pos2(600.0, 300.0);
+        frame(&mut app, vec![Event::PointerMoved(at)]);
+        frame(&mut app, vec![Event::PointerButton { pos: at, button, pressed: true, modifiers: mods }]);
+        let mut x = at.x;
+        let mut step = Vec3::ZERO;
+        while x < 780.0 {
+            x += 20.0;
+            let before = app.cam.target;
+            assert!(frame(&mut app, vec![Event::PointerMoved(pos2(x, 300.0))]).is_empty(), "no move inside the view ({x})");
+            step = app.cam.target - before;
+        }
+        assert!(step.len() > 1e-6, "the drag pans the view");
+        // Past the right edge: the cursor goes to the left edge.
+        let before = app.cam.target;
+        assert_eq!(frame(&mut app, vec![Event::PointerMoved(pos2(800.0, 300.0))]), vec![pos2(8.0, 300.0)]);
+        assert!(close(app.cam.target - before, step), "and the view pans on as usual");
+        // A move the window had queued before the cursor moved: no second request.
+        assert!(frame(&mut app, vec![Event::PointerMoved(pos2(806.0, 300.0))]).is_empty());
+        // The pointer reports the jump plus 20 points more of the hand's motion.
+        let before = app.cam.target;
+        assert!(frame(&mut app, vec![Event::PointerMoved(pos2(34.0, 300.0))]).is_empty());
+        let moved = app.cam.target - before;
+        assert!(close(moved, step), "the jump doesn't pan the view: {moved:?} vs {step:?}");
+        assert_eq!(app.viewport.cursor_wrap, None);
+        let before = app.cam.target;
+        frame(&mut app, vec![Event::PointerMoved(pos2(54.0, 300.0))]);
+        assert!(close(app.cam.target - before, step), "and keeps panning the same way");
         frame(&mut app, vec![Event::PointerButton { pos: pos2(54.0, 300.0), button, pressed: false, modifiers: mods }]);
         frame(&mut app, vec![]);
         assert_eq!(app.viewport.cursor_wrap, None);
