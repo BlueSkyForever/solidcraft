@@ -450,3 +450,7 @@ reports a different name (`EdgeFlangeFeature`), so a script can't match one agai
 - **British or American spelling** for labels and docs. Today both are in use (colour and color,
   centre and center, favourite and favorite); ids and keys use American spelling. #2501 proposes
   an English (UK) language option, so either base spelling can be read in the other.
+
+## Gusset
+
+A reinforcing plate fitted between two structural support faces. SolidCraft keeps it as a separate fabrication body with its own dimensions and persistent attachments.

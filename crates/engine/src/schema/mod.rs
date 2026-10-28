@@ -57,6 +57,7 @@ mod tests;
 pub mod component;
 pub mod edit;
 pub mod features;
+pub mod gusset;
 pub mod inspect;
 pub mod render;
 pub mod render_ui;
