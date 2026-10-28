@@ -563,6 +563,7 @@
   "cmd.document_metadata_remove": "デザインのプロパティを削除",
   "cmd.document_metadata_set": "デザインのプロパティを変更",
   "cmd.document_units": "デザインの単位を変更",
+  "cmd.drawing_hole_callout": "穴の注記",
   "cmd.edit_checkpoint": "チェックポイント",
   "cmd.edit_restore_checkpoint": "チェックポイントを復元",
   "cmd.engine_commands": "コマンドを一覧表示",

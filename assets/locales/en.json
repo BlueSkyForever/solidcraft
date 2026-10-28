@@ -563,6 +563,7 @@
   "cmd.document_metadata_remove": "Remove Design Property",
   "cmd.document_metadata_set": "Change Design Properties",
   "cmd.document_units": "Change Design Units",
+  "cmd.drawing_hole_callout": "Hole Callout",
   "cmd.edit_checkpoint": "Checkpoint",
   "cmd.edit_restore_checkpoint": "Restore Checkpoint",
   "cmd.engine_commands": "List Commands",
