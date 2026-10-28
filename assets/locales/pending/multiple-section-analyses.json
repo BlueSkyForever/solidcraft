@@ -48,5 +48,35 @@
     "help.inspect.section": "평면이나 평평한 면을 따라 뷰를 잘라 모델 내부를 보여 줍니다. 형상은 바뀌지 않습니다. 각 단면은 브라우저의 분석 폴더에 남고 한 번에 하나만 표시되며, 면이나 구성 평면 위의 단면은 그것을 따라갑니다.",
     "section.default_name": "단면 {n}",
     "section.not_found": "이 단면은 적용되지 않습니다: {why}"
+  },
+  "ar": {
+    "cmd.inspect_section_delete": "حذف تحليل المقطع",
+    "cmd.inspect_section_edit": "تعديل تحليل المقطع",
+    "cmd.inspect_section_list": "قائمة تحليلات المقطع",
+    "cmd.inspect_section_rename": "إعادة تسمية تحليل المقطع",
+    "cmd.inspect_section_visibility": "إظهار/إخفاء تحليل المقطع",
+    "help.inspect.section": "يقطع العرض على طول مستوى أو وجه مستوٍ ليظهر داخل النموذج؛ لا تتغير الهندسة. يُحفظ كل مقطع في مجلد التحليل في المتصفح، ويُعرض مقطع واحد في كل مرة، ويتبع المقطع الموجود على وجه أو مستوى إنشاء ذلك الوجه أو المستوى.",
+    "section.default_name": "مقطع {n}",
+    "section.not_found": "هذا المقطع لا يقطع: {why}"
+  },
+  "he": {
+    "cmd.inspect_section_delete": "מחיקת ניתוח חתך",
+    "cmd.inspect_section_edit": "עריכת ניתוח חתך",
+    "cmd.inspect_section_list": "רשימת ניתוחי חתך",
+    "cmd.inspect_section_rename": "שינוי שם ניתוח חתך",
+    "cmd.inspect_section_visibility": "הצגה/הסתרה של ניתוח חתך",
+    "help.inspect.section": "חותך את התצוגה לאורך מישור או פאה שטוחה כך שפנים המודל נראה; הגאומטריה אינה משתנה. כל חתך נשמר בתיקיית הניתוח בדפדפן, מוצג חתך אחד בכל פעם, וחתך על פאה או על מישור בנייה עוקב אחריהם.",
+    "section.default_name": "חתך {n}",
+    "section.not_found": "חתך זה אינו חותך: {why}"
+  },
+  "vi": {
+    "cmd.inspect_section_delete": "Xóa phân tích mặt cắt",
+    "cmd.inspect_section_edit": "Chỉnh sửa phân tích mặt cắt",
+    "cmd.inspect_section_list": "Danh sách phân tích mặt cắt",
+    "cmd.inspect_section_rename": "Đổi tên phân tích mặt cắt",
+    "cmd.inspect_section_visibility": "Hiện/Ẩn phân tích mặt cắt",
+    "help.inspect.section": "Cắt khung nhìn theo một mặt phẳng hoặc một mặt phẳng của vật thể để thấy bên trong mô hình; hình học không thay đổi. Mỗi mặt cắt được giữ trong thư mục Phân tích của trình duyệt, mỗi lần chỉ hiện một mặt cắt, và mặt cắt trên một mặt hoặc mặt phẳng dựng hình sẽ đi theo nó.",
+    "section.default_name": "Mặt cắt {n}",
+    "section.not_found": "Mặt cắt này không có tác dụng: {why}"
   }
 }
