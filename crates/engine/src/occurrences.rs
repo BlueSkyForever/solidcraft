@@ -118,6 +118,22 @@ impl PlacementIndex {
 }
 
 impl OccurrenceBodiesCache {
+    pub(crate) fn remember(&mut self, key: (Vec<u64>, bool), bodies: std::sync::Arc<[String]>) {
+        if !self.bodies.contains_key(&key) && self.bodies.len() >= OCCURRENCE_BODIES_CACHED {
+            // Keep larger subtree expansions: cheap leaf answers are easier to rebuild.
+            // Break equal-cost ties by occurrence key, independent of HashMap iteration order.
+            if let Some(evict) = self
+                .bodies
+                .iter()
+                .min_by(|(left_key, left), (right_key, right)| left.len().cmp(&right.len()).then_with(|| left_key.cmp(right_key)))
+                .map(|(key, _)| key.clone())
+            {
+                self.bodies.remove(&evict);
+            }
+        }
+        self.bodies.insert(key, bodies);
+    }
+
     fn matches(&self, session: &Session, model: &std::sync::Arc<solidcraft_doc::ModelState>) -> bool {
         std::sync::Arc::ptr_eq(&self.doc, &session.doc) && std::sync::Arc::ptr_eq(&self.model, model) && self.pending_moves == session.pending_moves
     }
@@ -368,16 +384,7 @@ impl Session {
                 });
             }
             if let Some(cache) = cache.as_mut() {
-                if !cache.bodies.contains_key(&key) && cache.bodies.len() >= OCCURRENCE_BODIES_CACHED {
-                    // Retire one remembered answer, not the whole cache: a burst of other
-                    // paths (a Browser reveal, a hover) no longer evicts the active
-                    // occurrence's entry and forces a full re-expansion on the next
-                    // highlight build (#7502).
-                    if let Some(evict) = cache.bodies.keys().next().cloned() {
-                        cache.bodies.remove(&evict);
-                    }
-                }
-                cache.bodies.insert(key, bodies.clone());
+                cache.remember(key, bodies.clone());
             }
         }
         Ok(bodies)

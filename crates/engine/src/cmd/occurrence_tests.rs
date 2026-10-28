@@ -1418,6 +1418,39 @@ fn occurrence_bodies_lists_a_nested_assembly() {
     }
 }
 
+/// Retention must not depend on a HashMap's random seed, even when its first entry
+/// is the most expensive answer to rebuild.
+#[test]
+fn occurrence_bodies_cache_prefers_small_answers_and_stable_ties() {
+    use std::sync::Arc;
+    let mut s = Session::default();
+    let (_, assembly) = created(&mut s, "Assembly");
+    s.occurrence_bodies_shared(&[assembly], true).unwrap();
+    let mut guard = s.occurrence_bodies_cache.lock().unwrap();
+    let cache = guard.as_mut().unwrap();
+    // Synthetic cache entries isolate retention from geometry and placement traversal.
+    cache.bodies.clear();
+    let small: Arc<[String]> = vec!["Leaf".to_string()].into();
+    for id in 0..256 {
+        cache.bodies.insert((vec![id], false), small.clone());
+    }
+    let costly_key = cache.bodies.keys().next().unwrap().clone();
+    let costly: Arc<[String]> = vec!["A".to_string(), "B".to_string(), "C".to_string()].into();
+    cache.bodies.insert(costly_key.clone(), costly.clone());
+    let victim = cache.bodies.keys().filter(|key| **key != costly_key).min().unwrap().clone();
+    cache.remember((vec![256], false), small);
+    assert!(cache.bodies.contains_key(&costly_key), "a cheap answer must be retired before a larger subtree");
+    assert!(Arc::ptr_eq(cache.bodies.get(&costly_key).unwrap(), &costly));
+    assert!(!cache.bodies.contains_key(&victim), "equal-cost victims are chosen by occurrence key");
+    assert_eq!(cache.bodies.len(), 256);
+    let mut keys: Vec<_> = cache.bodies.keys().cloned().collect();
+    keys.sort();
+    cache.remember(costly_key, costly);
+    let mut after: Vec<_> = cache.bodies.keys().cloned().collect();
+    after.sort();
+    assert_eq!(after, keys, "refreshing an existing answer never retires another entry");
+}
+
 /// A burst of other paths retires single remembered answers instead of clearing the whole
 /// cache, so the active occurrence's listing survives and needn't re-expand (#7502).
 #[test]
