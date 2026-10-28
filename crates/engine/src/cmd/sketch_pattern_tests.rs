@@ -618,7 +618,7 @@ fn circular_quantity_rejects_invalid_expressions_and_parameter_changes_atomicall
         assert_eq!(s.doc.to_json(), before);
     }
     run(&mut s, "sketch.pattern.circular", json!({"entities":["seed"],"center":"origin","count":"holes + 1e-10"}));
-    for expression in ["1", "0", "-3", "3.5", "501", "5 mm", "1e309"] {
+    for expression in ["1", "0", "-3", "3.5", "50001", "5 mm", "1e309"] {
         let before = s.doc.to_json();
         assert!(s.execute("parameters.change", &json!({"name":"holes","expression":expression})).is_err(), "{expression}");
         assert_eq!(s.doc.to_json(), before, "rejected {expression} leaves the document unchanged");
@@ -657,26 +657,23 @@ fn circular_quantity_changes_keep_partial_full_centered_and_reversed_placements(
     }
 }
 
-/// #5280: a pattern joins its copies into one group of unknowns, and a group larger than the
-/// solver takes is refused saying so, not as an over-constraint with no constraint named.
+/// #5280: a pattern used to join its copies into one group of unknowns, and a group larger
+/// than the solver takes was refused saying so. The star now splits per copy (#7824): the
+/// same pattern solves, each copy against the seed's group.
 #[test]
-fn a_pattern_too_large_to_solve_says_why() {
+fn a_pattern_past_the_old_component_wall_solves() {
     let hexagon = |s: &mut Session| {
         let r = run(s, "sketch.polygon.inscribed", json!({"center": [0, 0], "radius": 2.5, "sides": 6}));
         ids(&r["curves"])
     };
-    // 15 × 22 hexagons: inside the limit.
+    // 17 × 20 hexagons: past the old dense wall (340 copies × 12 unknowns).
     let mut s = new_sketch();
     let lines = hexagon(&mut s);
-    run(&mut s, "sketch.pattern.rectangular", json!({"entities": lines, "count": 15, "spacing": 6.5, "count2": 22, "spacing2": 6.5}));
-    // 17 × 20: past it.
-    let mut s = new_sketch();
-    let lines = hexagon(&mut s);
-    let e = s
-        .execute("sketch.pattern.rectangular", &json!({"entities": lines, "count": 17, "spacing": 6.5, "count2": 20, "spacing2": 6.5}))
-        .unwrap_err()
-        .to_string();
-    assert!(e.contains("unknowns") && e.contains(&solidcraft_sketch::MAX_COMPONENT_VARS.to_string()) && !e.contains("conflicts with"), "{e}");
+    run(&mut s, "sketch.pattern.rectangular", json!({"entities": lines, "count": 17, "spacing": 6.5, "count2": 20, "spacing2": 6.5}));
+    let state = s.world_state();
+    let ss = state.sketch(1).unwrap();
+    assert!(ss.report.oversized.is_none(), "{:?}", ss.report.oversized);
+    assert!(ss.report.ok(), "{:?}", ss.report);
 }
 
 #[test]
@@ -725,7 +722,7 @@ fn circular_pattern_expressions_validate_inputs_and_keep_numeric_compatibility()
     let sk = sketch(&s);
     let last = &sk.patterns[0].instances.last().unwrap().curves[0];
     assert!(point(&sk, &format!("{last}.center")).dist(Vec2::new(-20., 0.)) < 1e-6);
-    for expression in ["2.5", "501", "0", "-1"] {
+    for expression in ["2.5", "50001", "0", "-1"] {
         let error = s.execute("parameters.change", &json!({"name":"copies","expression":expression})).unwrap_err().to_string();
         assert!(error.contains("whole number"), "{error}");
     }
@@ -754,4 +751,37 @@ fn circular_pattern_expressions_validate_inputs_and_keep_numeric_compatibility()
     for (a, b) in before.points.iter().zip(&after.points) {
         assert!(a.id == b.id && a.pos.dist(b.pos) < 1e-9, "{} moved", a.id);
     }
+}
+
+#[test]
+fn pattern_copy_limit_is_a_session_preference() {
+    // A 38×38 rectangular pattern (1444 copies) passes once the session raises its limit (#7824).
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points":[[0,0],[1,0]],"ids":["l1"]}));
+    let error = s.execute("sketch.pattern.rectangular", &json!({"entities":["l1"],"count":38,"count2":38,"spacing":10})).unwrap_err().to_string();
+    assert!(error.contains("too many copies"), "{error}");
+    s.max_pattern_copies = 2000;
+    let out = run(&mut s, "sketch.pattern.rectangular", json!({"entities":["l1"],"count":38,"count2":38,"spacing":10}));
+    assert_eq!(ids(&out["curves"]).len(), 1444 - 1);
+    // 1444 copies of a line is past the old dense wall: it solves copy by copy (#7824).
+    assert!(s.world_state().sketch(1).unwrap().report.ok(), "the raised pattern solves");
+    run(&mut s, "sketch.pattern.rectangular", json!({"pattern":out["pattern"],"count":40}));
+    // The raised design still reads back: format validation checks the ceiling, not the default.
+    assert!(solidcraft_doc::format::read(&s.doc.to_json()).is_ok());
+    // Lowering the limit again refuses edits to the pattern it no longer covers.
+    s.max_pattern_copies = 500;
+    assert!(s.execute("sketch.pattern.rectangular", &json!({"pattern":out["pattern"],"count":40})).is_err());
+}
+
+#[test]
+fn pattern_copy_limit_clamps_to_the_absolute_ceiling() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points":[[0,0],[1,0]],"ids":["l1"]}));
+    // A preference above the ceiling cannot push a pattern past it, and the default still refuses 501.
+    s.max_pattern_copies = usize::MAX;
+    assert!(s.execute("sketch.pattern.rectangular", &json!({"entities":["l1"],"count":50_001,"spacing":10})).is_err());
+    let error = s.execute("sketch.pattern.circular", &json!({"entities":["l1"],"center":[0,0],"count":50_001})).unwrap_err().to_string();
+    assert!(error.contains("50000"), "{error}");
+    s.max_pattern_copies = 0;
+    assert!(s.execute("sketch.pattern.rectangular", &json!({"entities":["l1"],"count":2,"spacing":10})).is_err());
 }

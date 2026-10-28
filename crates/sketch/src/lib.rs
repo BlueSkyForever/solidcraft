@@ -40,6 +40,7 @@ mod spline_points;
 mod text;
 mod thin;
 mod union_find;
+pub mod watch;
 mod wire;
 
 pub use curves::{
@@ -60,7 +61,7 @@ pub use model::{
 };
 pub use offset::OffsetChain;
 pub use offset_topology::{OffsetCreated, OffsetRole, OffsetRoleFlags, OffsetRoleKind, OffsetTopology};
-pub use pattern::{PatternAlignment, PatternInstance, SketchPattern, SketchPatternKind};
+pub use pattern::{DEFAULT_PATTERN_COPIES, MAX_PATTERN_COPIES, PatternAlignment, PatternInstance, SketchPattern, SketchPatternKind};
 pub use periodic::periodic_beziers;
 pub use profiles::{
     CurvePick, Profile, distinct_curves, find_drawn_profiles, find_profiles, merge_regions, profile_at_point, profile_by_curves,
@@ -95,6 +96,8 @@ mod font_tests;
 mod least_motion_tests;
 #[cfg(test)]
 mod line_circle_tests;
+#[cfg(test)]
+mod pattern_batch_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
