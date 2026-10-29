@@ -1,7 +1,8 @@
 use serde_json::{Value, json};
 
 use super::{
-    BoundingSolidParams, BoxParams, ConeParams, CylinderParams, ExtrudeParams, FeatureResult, PipeParams, ScaleParams, SphereParams, TorusParams,
+    BoundingSolidParams, BoxParams, ConeParams, CylinderParams, ExtrudeParams, FeatureResult, LightenParams, PipeParams, ScaleParams, SphereParams,
+    TorusParams,
 };
 use crate::Session;
 use crate::schema::tests::{assert_keys, assert_strict_keeps_todays_errors, conforms, sketch_rectangle};
@@ -83,6 +84,24 @@ fn schemas_and_the_key_check_agree() {
     );
     assert_keys(input_schema_for::<BoundingSolidParams>(), &["bodies", "body_name", "body_names", "margin", "name", "participants"]);
     assert_keys(input_schema_for::<ScaleParams>(), &["bodies", "factor", "factors", "name", "origin", "participants"]);
+    assert_keys(
+        input_schema_for::<LightenParams>(),
+        &[
+            "body_name",
+            "body_names",
+            "depth",
+            "name",
+            "participants",
+            "profiles",
+            "sketch",
+            "targets",
+            "thickness",
+            "through_all",
+            "to",
+            "tool_radius",
+            "trim",
+        ],
+    );
 }
 
 #[test]

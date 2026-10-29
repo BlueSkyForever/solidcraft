@@ -6742,6 +6742,8 @@ fn replay(
     Ok(())
 }
 
+#[path = "eval_lighten.rs"]
+mod lighten;
 #[path = "model_cache.rs"]
 mod model_cache;
 #[path = "eval_more.rs"]
@@ -7150,6 +7152,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::ReplaceFace { .. }
         | FeatureKind::Align { .. }
         | FeatureKind::Remove { .. } => more::eval(doc, vals, f, st),
+        FeatureKind::Lighten { .. } => lighten::eval(doc, vals, f, st, warning),
         FeatureKind::Sketch { plane, sketch } => {
             let anchor = crate::face_anchor::plane_face_anchor(plane);
             let fst = match anchor {
