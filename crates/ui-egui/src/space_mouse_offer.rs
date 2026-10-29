@@ -546,6 +546,15 @@ mod preferences_tests {
             .collect();
         let card = crate::scenario::rect_of("toast:space_mouse_offer").unwrap();
         assert!(spots.iter().all(|p| (p[1] - spots[0][1]).abs() < 1.0), "one row: {spots:?} in {card:?}");
+        // Laid out with the buttons' drawn widths: the main action is flush with the row's right
+        // edge (the card's, less its 12-point margin), and the buttons sit a gap apart.
+        let button = |i: usize| crate::scenario::rect_of(&format!("toast:space_mouse_offer:button:{i}")).unwrap();
+        let (calibrate, direct, never) = (button(0), button(1), button(2));
+        assert!((calibrate.right() - (card.right() - 12.0)).abs() < 0.5, "flush right: {calibrate:?} in {card:?}");
+        let gap = crate::theme::Tokens::get().space_8;
+        assert!((calibrate.left() - direct.right() - gap).abs() < 0.5, "{direct:?} then {calibrate:?}");
+        assert!((direct.left() - never.right() - gap).abs() < 0.5, "{never:?} then {direct:?}");
+        assert!(never.left() >= card.left() + 28.0 - 0.5, "inside the row: {never:?} in {card:?}");
         // The only control named Close is the ×, in the card's top-right corner.
         let close = h.at(&serde_json::json!({"handle": "toast:space_mouse_offer:close"})).unwrap();
         let near = |p: [f64; 2]| (p[0] - close[0]).abs() < 1.0 && (p[1] - close[1]).abs() < 1.0;

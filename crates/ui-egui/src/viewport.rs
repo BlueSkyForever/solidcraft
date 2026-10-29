@@ -5064,6 +5064,9 @@ pub(crate) fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Re
         if let Some(toast) = paint_toast_ext(ui, free, crate::i18n::tr("ui.3d_mouse_offer").to_string(), ToastLead::Dot(false), &labels, extras) {
             let r = toast.rect;
             crate::scenario::publish_rect("toast:space_mouse_offer", r);
+            for (index, button) in toast.buttons.iter().enumerate() {
+                crate::scenario::publish_rect(&format!("toast:space_mouse_offer:button:{index}"), *button);
+            }
             obstacles.push(r);
             free.max.y = r.top() - t.space_8;
             shown.push(r);
@@ -5170,7 +5173,7 @@ impl ToastPlace {
 
 /// Every toast's width in the corner stack: room for three buttons on one row (the 3D mouse offer's
 /// Calibrate…, Use Direct Driver and Never show again, #7971); longer text wraps.
-pub(crate) const TOAST_WIDTH: f32 = 400.0;
+pub(crate) const TOAST_WIDTH: f32 = 360.0;
 
 /// Where the corner stack may go: the largest free rect in a `TOAST_WIDTH` column at the right of
 /// `view`, clear of `obstacles` (the axis view and cube at the top, the view toolbar when a narrow
@@ -5213,7 +5216,7 @@ pub(crate) fn corner_free(view: Rect, obstacles: &[Rect]) -> Rect {
 
 /// What a toast's button is for, which sets its look and where it goes: the main action first
 /// (the accent button), then an alternative, then the quiet dismissals.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ToastKind {
     Primary,
     Secondary,
@@ -5292,6 +5295,16 @@ fn toast_action_spots_trailing(buttons: &[(f32, ToastKind)], row_width: f32, gap
         }
     }
     spots
+}
+
+/// Where a toast button's drawn width is remembered: by its text and kind, which set its look.
+fn toast_button_key(label: &str, kind: ToastKind) -> egui::Id {
+    egui::Id::new(("sc_toast_button_width", label, kind))
+}
+
+/// The width a toast button with this text and kind was last drawn at, if it has been drawn.
+fn toast_button_width(ctx: &egui::Context, label: &str, kind: ToastKind) -> Option<f32> {
+    ctx.data(|data| data.get_temp::<f32>(toast_button_key(label, kind))).filter(|width| width.is_finite() && *width > 0.0)
 }
 
 /// What leads a toast's text: a dot (red for an error) or a spinner.
@@ -5438,11 +5451,15 @@ fn paint_toast_ext(
     let gap = t.space_8;
     let button_height = crate::ui_kit::row_height();
     let row_width = if corner { wrap } else { (free.width() - 40.0).clamp(0.0, 440.0) };
+    // Each button's width as the kit drew it (#7971): the same text, font and padding, measured
+    // from the button itself. Before a button was ever drawn, an estimate stands in for one frame.
     let sizes: Vec<(f32, ToastKind)> = actions
         .iter()
         .map(|(label, kind)| {
-            let padding = if *kind == ToastKind::Primary { t.space_16 } else { t.space_12 };
-            let width = painter.layout_no_wrap((*label).to_string(), crate::fonts::medium(t.font_label), t.text).size().x + 2.0 * padding;
+            let width = toast_button_width(ui.ctx(), label, *kind).unwrap_or_else(|| {
+                let padding = if *kind == ToastKind::Primary { t.space_16 } else { t.space_12 };
+                painter.layout_no_wrap((*label).to_string(), crate::fonts::medium(t.font_label), t.text).size().x + 2.0 * padding
+            });
             (width.min(row_width), *kind)
         })
         .collect();
@@ -5491,11 +5508,14 @@ fn paint_toast_ext(
     let origin = text_top + vec2(0.0, galley.size().y + gap);
     for (index, ((label, kind), spot)) in actions.iter().zip(&spots).enumerate() {
         let at = spot.translate(origin.to_vec2());
-        // A UI of its own on the viewport's layer, so the toast needs no `&mut Ui`.
+        // A UI of its own on the viewport's layer, so the toast needs no `&mut Ui`. It has the
+        // row's width, so a button is never squeezed into a spot laid out for a smaller one and
+        // its measured width is its own.
+        let room = Rect::from_min_size(at.min, vec2(row_width.max(at.width()), at.height()));
         let mut button_ui = egui::Ui::new(
             ui.ctx().clone(),
             egui::Id::new(("sc_toast_action", index)),
-            egui::UiBuilder::new().layer_id(ui.layer_id()).max_rect(at).layout(egui::Layout::left_to_right(egui::Align::Center)),
+            egui::UiBuilder::new().layer_id(ui.layer_id()).max_rect(room).layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         button_ui.set_clip_rect(button_ui.clip_rect().intersect(r));
         let response = button_ui
@@ -5511,6 +5531,14 @@ fn paint_toast_ext(
         };
         if response.clicked() {
             clicked = Some(index);
+        }
+        // Remember the width it was drawn at; laid out at another, the toast is laid out again next frame.
+        let drawn = response.rect.width();
+        if drawn.is_finite() && drawn > 0.0 {
+            if sizes.get(index).is_some_and(|(used, _)| (used - drawn).abs() > 0.5 && drawn < row_width) {
+                ui.ctx().request_repaint();
+            }
+            ui.ctx().data_mut(|data| data.insert_temp(toast_button_key(label, *kind), drawn));
         }
         buttons.push(response.rect);
     }
