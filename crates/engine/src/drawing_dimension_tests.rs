@@ -107,7 +107,7 @@ impl Fixture {
     /// The box's corner at `p`, by the names of the edges that meet there.
     fn corner(&self, p: [f64; 3]) -> ModelPoint {
         let edges = self.edges_at(p).into_iter().map(|(name, ..)| name).collect();
-        ModelPoint { body: "Box".into(), origin_feature: self.feature, edges, path: Vec::new() }
+        ModelPoint { body: "Box".into(), origin_feature: self.feature, edges, centre: false, path: Vec::new() }
     }
 
     /// Adds a dimension on `view` (2 decimals, its text centred) and gives its id.

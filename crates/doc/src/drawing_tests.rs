@@ -64,7 +64,13 @@ fn plate() -> Drawing {
     let iso = ViewKind::Base { source: plate_id, view: ViewDirection::Named(NamedView::IsoFrontRight) };
     let full_size = ViewOverrides { scale: Some("1:1".parse().unwrap()), tangent_edges: Some(TangentEdges::Show), ..ViewOverrides::default() };
     add(&mut d, bolt_sheet, iso, ViewPlace::At([105.0, 148.5]), full_size, 5.0);
-    let corner = |edges: [&str; 2]| ModelPoint { body: "Plate".into(), origin_feature: 1, edges: edges.map(String::from).to_vec(), path: Vec::new() };
+    let corner = |edges: [&str; 2]| ModelPoint {
+        body: "Plate".into(),
+        origin_feature: 1,
+        edges: edges.map(String::from).to_vec(),
+        centre: false,
+        path: Vec::new(),
+    };
     let edge = |name: &str| ModelEdge { body: "Plate".into(), origin_feature: 1, name: name.into(), path: vec![3, 7] };
     let measures = [
         DimensionKind::Linear {

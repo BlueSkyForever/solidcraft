@@ -22,7 +22,7 @@ use crate::params;
 const MAX_LISTED_EDGES: usize = 64;
 
 const EDGE: &str = "an edge is a point on it [x, y, z], or {point} or {body, index}, with path?";
-const CORNER: &str = "a corner is a point [x, y, z], or {point} or {edges: [edges]}, with path?";
+const CORNER: &str = "a corner is a point [x, y, z], or {point} or {edges: [edges]} or {centre: a circle or an arc}, with path?";
 
 /// An edge to measure: what picks it, and the occurrences its body is placed through.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,11 +77,13 @@ fn corner_param(v: &Value) -> Result<CornerParam, String> {
     if let Some(p) = params::vec3(v) {
         return Ok(CornerParam { pick: CornerPick::Point(p), path: Vec::new() });
     }
-    let o = keys(v, &["point", "edges", "path"], CORNER)?;
+    let o = keys(v, &["point", "edges", "centre", "path"], CORNER)?;
     let path = path(o.get("path"))?;
-    let pick = match (o.get("point"), o.get("edges")) {
-        (Some(p), None) => CornerPick::Point(params::vec3(p).ok_or(CORNER)?),
-        (None, Some(edges)) => {
+    let pick = match (o.get("point"), o.get("edges"), o.get("centre")) {
+        (Some(p), None, None) => CornerPick::Point(params::vec3(p).ok_or(CORNER)?),
+        // The centre's edge is on the point's body, so it has no path of its own.
+        (None, None, Some(edge)) if edge.get("path").is_none() => CornerPick::Centre(edge_pick(edge)?),
+        (None, Some(edges), None) => {
             let listed = || format!("a corner's `edges` lists 2 to {MAX_LISTED_EDGES} edges, each without a path of its own");
             let edges = edges.as_array().filter(|l| l.len() <= MAX_LISTED_EDGES).ok_or_else(listed)?;
             let own_path = edges.iter().any(|e| e.get("path").is_some());
@@ -125,7 +127,7 @@ impl JsonSchema for CornerParam {
     }
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
-            "description": "A corner: a point [x, y, z] in the design's frame, or {point} or {edges: [2 to 16 edges that meet there]}, with path? as an edge's.",
+            "description": "A corner: a point [x, y, z] in the design's frame, or {point} or {edges: [2 to 16 edges that meet there]}, or {centre: an edge that is a circle or an arc} for its centre (a hole's), with path? as an edge's.",
             "anyOf": [{"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}, {"type": "object"}]
         })
     }

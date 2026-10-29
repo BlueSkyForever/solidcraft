@@ -18,7 +18,7 @@ const BODY: &str = "Box";
 const FEATURE: u64 = 7;
 
 fn corner(edges: &[&str]) -> ModelPoint {
-    ModelPoint { body: BODY.into(), origin_feature: FEATURE, edges: edges.iter().map(|e| e.to_string()).collect(), path: Vec::new() }
+    ModelPoint { body: BODY.into(), origin_feature: FEATURE, edges: edges.iter().map(|e| e.to_string()).collect(), centre: false, path: Vec::new() }
 }
 
 fn edge(name: &str) -> ModelEdge {
@@ -159,6 +159,18 @@ fn the_dimensions_rules_are_kept_on_reading() {
     };
     let meet = rule(&linear_id, "a corner is where 2 to 16 named edges meet");
     assert_eq!([edges(0), edges(1), edges(2), edges(16), edges(17)], [meet.clone(), meet.clone(), "read".into(), "read".into(), meet]);
+    // A centre is of one named circle or arc, and saves as `centre`.
+    let centred = |n: usize| {
+        let mut v = file(&d);
+        let b = &mut dim(&mut v, &linear_id)["kind"]["linear"]["b"];
+        b["centre"] = json!(true);
+        b["edges"] = json!((0..n).map(|i| format!("F3:e{i}")).collect::<Vec<_>>());
+        let read = Drawing::from_json(&v.to_string()).map_err(|e| e.to_string())?;
+        Ok::<_, String>(dim(&mut file(&read), &linear_id)["kind"]["linear"]["b"].clone())
+    };
+    let one = Err(rule(&linear_id, "a centre is of one named circle or arc"));
+    assert_eq!([centred(0), centred(2)], [one.clone(), one]);
+    assert_eq!(centred(1), Ok(json!({"body": "Box", "origin_feature": 7, "edges": ["F3:e0"], "centre": true})));
     // The feature that made the body, and the occurrence path.
     let feature = rule(&length_id, "a reference names the feature that made its body");
     assert_eq!(refused(&d, |v| dim(v, &length_id)["kind"]["length"]["edge"]["origin_feature"] = json!(0)), feature);

@@ -203,6 +203,42 @@ fn a_radial_dimension_reads_a_hole_and_an_edit_makes_it_a_diameter() {
     assert_eq!(s.drawing("test").unwrap().to_json().unwrap(), before);
 }
 
+/// A linear dimension measures from the centre of a hole or an arc, each named by its edge: the
+/// hole through the box about (40, 15) on the front, and the fillet's quarter arc about (75, 25).
+/// A straight edge has no centre, and a centre's edge has no path of its own.
+#[test]
+fn a_linear_dimension_measures_from_a_holes_centre() {
+    let (mut s, view) = front_view();
+    let drawing = s.drawing("test").unwrap().id;
+    run(&mut s, "drawing.close", json!({}));
+    run(&mut s, "solid.cylinder", json!({"radius": 6, "height": 42, "base": [40, -1, 15], "axis": "Y", "operation": "cut", "targets": ["Box"]}));
+    run(&mut s, "solid.fillet", json!({"edges": [[80, 20, 30]], "radius": 5, "body": "Box"}));
+    run(&mut s, "drawing.open", json!({"drawing": ids::encode(drawing)}));
+    let centre = |at: [f64; 3], radius: f64| json!({"centre": {"body": "Box", "index": round_index(&s, at, radius)}});
+    let (hole, arc) = (centre([40.0, 0.0, 15.0], 6.0), centre([75.0, 0.0, 25.0], 5.0));
+    let along = add(&mut s, view, json!({"linear": {"a": [0, 0, 0], "b": hole, "direction": "horizontal"}}));
+    reads(&along, 40.0, "40.00");
+    let saved = &along["record"]["kind"]["linear"]["b"];
+    assert_eq!((saved["centre"].clone(), saved["edges"].as_array().map(Vec::len)), (json!(true), Some(1)), "{saved}");
+    reads(&add(&mut s, view, json!({"linear": {"a": [0, 0, 0], "b": hole, "direction": "vertical"}})), 15.0, "15.00");
+    reads(&add(&mut s, view, json!({"linear": {"a": hole, "b": arc, "direction": "horizontal"}})), 35.0, "35.00");
+    reads(&add(&mut s, view, json!({"linear": {"a": hole, "b": arc, "direction": "vertical"}})), 10.0, "10.00");
+    let before = s.drawing("test").unwrap().to_json().unwrap();
+    let v = ids::encode(view);
+    let linear = |a: Value| json!({"view": v, "kind": {"linear": {"a": a, "b": [80, 0, 0]}}});
+    let cases = [
+        (linear(json!({"centre": [40, 0, 30]})), "isn't a circle or an arc"),
+        (linear(json!({"centre": {"point": [40, 0, 30], "path": [1]}})), "{centre: a circle or an arc}"),
+        (linear(json!({"centre": [40, 0, 30], "edges": [[40, 0, 30], [0, 0, 15]]})), "{centre: a circle or an arc}"),
+        (linear(json!({"centre": [40, 20, 15]})), "no edge at [40, 20, 15]"),
+    ];
+    for (p, why) in cases {
+        let e = refused(&mut s, p.clone());
+        assert!(e.contains(why), "{p}: {e}");
+    }
+    assert_eq!(s.drawing("test").unwrap().to_json().unwrap(), before);
+}
+
 /// A dimension whose edge is filleted away has no value, and gives the one it last read this
 /// session as its last good value.
 #[test]

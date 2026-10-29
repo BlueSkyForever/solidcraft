@@ -47,7 +47,7 @@ pub static COMMANDS: &[CommandSpec] = &[
              reading?: projected (default) or true}}, {length: {edge, direction?, reading?}}, {angle: {a, b: straight edges, reading?, \
              other_side?}} or {radial: {edge: a circle or an arc the view sees face on, diameter?: by default for a whole circle or \
              half a turn or more}}; an edge is a point on it [x, y, z] in the design's frame, {point} or {body, index}, and a corner a point, \
-             {point} or {edges: [2 to 16 edges]}, each with path?: the occurrences its body is placed through, from the top; offset_mm?: \
+             {point}, {edges: [2 to 16 edges]} or {centre: an edge that is a circle or an arc}, each with path?: the occurrences its body is placed through, from the top; offset_mm?: \
              the dimension line's distance on paper (default 10); text?: centred (default) or {at: [x, y]} from the view's centre; \
              decimals?: 0..6 (default 2); override_text? → what drawing.dimension.inspect answers for it. Saved by the edges' names, \
              never the points picked; one the view can't measure is refused. One undo step; no model is evaluated.",
