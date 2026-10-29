@@ -56,6 +56,7 @@ mod tests;
 // The contracts, by command file.
 pub mod component;
 pub mod edit;
+pub mod end_cap;
 pub mod features;
 pub mod inspect;
 pub mod render;
