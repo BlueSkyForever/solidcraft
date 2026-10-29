@@ -1,0 +1,47 @@
+{
+  "en": {
+    "Back to the original order": "Back to the original order",
+    "Sort A to Z": "Sort A to Z",
+    "Sort Z to A": "Sort Z to A"
+  },
+  "ar": {
+    "Back to the original order": "العودة إلى الترتيب الأصلي",
+    "Sort A to Z": "فرز تصاعدي",
+    "Sort Z to A": "فرز تنازلي"
+  },
+  "de": {
+    "Back to the original order": "Zurück zur ursprünglichen Reihenfolge",
+    "Sort A to Z": "Von A bis Z sortieren",
+    "Sort Z to A": "Von Z bis A sortieren"
+  },
+  "es": {
+    "Back to the original order": "Volver al orden original",
+    "Sort A to Z": "Ordenar de la A a la Z",
+    "Sort Z to A": "Ordenar de la Z a la A"
+  },
+  "fr": {
+    "Back to the original order": "Revenir à l'ordre d'origine",
+    "Sort A to Z": "Trier de A à Z",
+    "Sort Z to A": "Trier de Z à A"
+  },
+  "he": {
+    "Back to the original order": "חזרה לסדר המקורי",
+    "Sort A to Z": "מיון בסדר עולה",
+    "Sort Z to A": "מיון בסדר יורד"
+  },
+  "ja": {
+    "Back to the original order": "元の順序に戻す",
+    "Sort A to Z": "昇順で並べ替え",
+    "Sort Z to A": "降順で並べ替え"
+  },
+  "vi": {
+    "Back to the original order": "Trở về thứ tự ban đầu",
+    "Sort A to Z": "Sắp xếp từ A đến Z",
+    "Sort Z to A": "Sắp xếp từ Z đến A"
+  },
+  "zh": {
+    "Back to the original order": "恢复原始顺序",
+    "Sort A to Z": "升序排序",
+    "Sort Z to A": "降序排序"
+  }
+}
