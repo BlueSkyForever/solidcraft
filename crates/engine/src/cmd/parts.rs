@@ -597,7 +597,7 @@ fn shape_len(sh: &Shape) -> Option<f64> {
 fn resize_atomic(s: &mut Session, p: &Value) -> Result<Value> {
     let mut computed = s.scratch();
     let result = resize(&mut computed, p)?;
-    computed.undo.clear();
+    computed.history.clear();
     computed.active_component = s.active_component;
     computed.active_occurrence_path = s.active_occurrence_path.clone();
     computed.active_sketch = s.active_sketch.filter(|id| computed.doc.feature(*id).is_some());
@@ -868,18 +868,18 @@ mod tests {
         let path = vec![copied["occurrence"].as_u64().unwrap_or(0)];
         run(&mut s, "component.activate", json!({"component":id,"occurrence":copied["occurrence"],"path":path}));
         let before = s.doc.clone();
-        let undo = s.undo.len();
+        let undo = s.history.len();
         run(&mut s, "parts.resize", json!({"component":id,"size":"M8","length":25}));
-        assert_eq!(s.undo.len(), undo + 1);
+        assert_eq!(s.history.len(), undo + 1);
         assert_eq!(s.active_component, id);
         assert_eq!(s.active_occurrence_path, Some(path.clone()));
         let after = s.doc.clone();
         run(&mut s, "edit.undo", json!({}));
         assert_eq!(s.doc, before);
-        let redo = s.redo.len();
+        let redo = s.history.redo_steps().len();
         assert!(s.execute("parts.resize", &json!({"component":id,"length":0})).is_err());
         assert_eq!(s.doc, before);
-        assert_eq!(s.redo.len(), redo);
+        assert_eq!(s.history.redo_steps().len(), redo);
         assert_eq!(s.active_occurrence_path, Some(path));
         run(&mut s, "edit.redo", json!({}));
         assert_eq!(s.doc, after);
@@ -889,17 +889,14 @@ mod tests {
     fn resizing_a_part_at_the_history_limit_drops_only_one_old_step() {
         let mut s = Session::default();
         let part = run(&mut s, "parts.insert", json!({"family":"washer","size":"M6"}));
-        let Some(snapshot) = s.undo.last().cloned() else { panic!("insert did not record history") };
-        s.undo = (0..crate::MAX_UNDO)
-            .map(|index| {
-                let mut old = snapshot.clone();
-                old.label = format!("Earlier step {index}");
-                old
-            })
-            .collect();
+        let Some(snapshot) = s.history.last().cloned() else { panic!("insert did not record history") };
+        s.history.clear();
+        for index in 0..crate::MAX_UNDO {
+            s.history.push(crate::Snapshot { label: format!("Earlier step {index}"), ..snapshot.clone() });
+        }
         run(&mut s, "parts.resize", json!({"component":part["component"],"size":"M8"}));
-        assert_eq!(s.undo.len(), crate::MAX_UNDO);
-        assert_eq!(s.undo.first().map(|step| step.label.as_str()), Some("Earlier step 1"));
-        assert_eq!(s.undo.last().map(|step| step.label.as_str()), Some("Change Part Size"));
+        assert_eq!(s.history.len(), crate::MAX_UNDO);
+        assert_eq!(s.history.steps().first().map(|step| step.label.as_str()), Some("Earlier step 1"));
+        assert_eq!(s.history.last().map(|step| step.label.as_str()), Some("Change Part Size"));
     }
 }

@@ -81,7 +81,7 @@ fn negative_edit_keeps_downstream_distance_reference_positive() {
 fn cancel_after_canvas_edit_preserves_document_and_undo() {
     let mut h = make(json!({"from":[0,0,5],"to":[0,0,15],"to_offset":"2 mm"}));
     let original = extent(&h);
-    let undo = h.app.session.undo.len();
+    let undo = h.app.session.history.len();
     open(&mut h);
     assert_eq!(crate::canvas::anchor(&h.app, h.app.dialog.as_ref().unwrap()).unwrap().0.z, 5.0);
     h.step(&json!({"key":"A","cmd":true})).unwrap();
@@ -89,7 +89,7 @@ fn cancel_after_canvas_edit_preserves_document_and_undo() {
     h.frames(8);
     h.step(&json!({"widget":"Cancel"})).unwrap();
     assert_eq!(extent(&h), original);
-    assert_eq!(h.app.session.undo.len(), undo);
+    assert_eq!(h.app.session.history.len(), undo);
 }
 
 #[test]
@@ -189,16 +189,16 @@ fn failed_edit_and_cancel_keep_full_history_and_existing_redo() {
     }
     h.app.run("solid.box", json!({"length":2,"width":2,"height":2,"corner":[30,0,0],"body_name":"RedoBody"})).unwrap();
     h.app.run("edit.undo", json!({})).unwrap();
-    let undo = h.app.session.undo.len();
-    let redo = h.app.session.redo.len();
+    let undo = h.app.session.history.len();
+    let redo = h.app.session.history.redo_steps().len();
     assert_eq!(undo, 199);
     assert_eq!(redo, 1);
     h.app.session.selection = vec![solidcraft_engine::Sel::Body { name: "Main".into() }];
     let selection = h.app.session.selection.clone();
     let original = serde_json::to_value(&*h.app.session.doc).unwrap();
     open(&mut h);
-    assert_eq!(h.app.session.undo.len(), undo);
-    assert_eq!(h.app.session.redo.len(), redo);
+    assert_eq!(h.app.session.history.len(), undo);
+    assert_eq!(h.app.session.history.redo_steps().len(), redo);
     assert_eq!(h.app.session.selection, selection);
     h.step(&json!({"key":"A","cmd":true})).unwrap();
     h.step(&json!({"text":"missing_extent"})).unwrap();
@@ -206,8 +206,8 @@ fn failed_edit_and_cancel_keep_full_history_and_existing_redo() {
     assert!(h.app.dialog.is_some(), "failed edit must remain editable");
     h.step(&json!({"widget":"Cancel"})).unwrap();
     assert_eq!(serde_json::to_value(&*h.app.session.doc).unwrap(), original);
-    assert_eq!(h.app.session.undo.len(), undo);
-    assert_eq!(h.app.session.redo.len(), redo);
+    assert_eq!(h.app.session.history.len(), undo);
+    assert_eq!(h.app.session.history.redo_steps().len(), redo);
     assert_eq!(h.app.session.selection, selection);
     h.app.run("edit.redo", json!({})).unwrap();
     assert!(h.app.session.world_state().body("RedoBody").is_some());

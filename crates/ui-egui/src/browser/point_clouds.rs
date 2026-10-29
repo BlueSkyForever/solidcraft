@@ -12,18 +12,18 @@ use crate::SolveApp;
 use crate::context_menu::{Item, Target};
 use crate::ui_kit;
 
-/// The Edit Point Cloud card: the cloud, the undo depth when it opened, and the automatic
+/// The Edit Point Cloud card: the cloud, where the undo history stood when it opened, and the automatic
 /// height range of the points it was worked out for (it sorts a sample of them).
 #[derive(Clone, Debug)]
 pub struct CloudPanel {
     pub cloud: u64,
-    pub(crate) depth: usize,
+    pub(crate) mark: solidcraft_engine::Mark,
     auto: Option<(usize, [u64; 16], Option<[f64; 2]>)>,
 }
 
 impl CloudPanel {
     pub fn new(app: &SolveApp, cloud: u64) -> Self {
-        CloudPanel { cloud, depth: app.session.undo.len(), auto: None }
+        CloudPanel { cloud, mark: app.session.history.mark(), auto: None }
     }
     /// The cloud's automatic height range, worked out again only when its points or placement
     /// change.
@@ -178,11 +178,7 @@ pub(crate) fn panel(app: &mut SolveApp, ctx: &egui::Context) {
         && app.run("pointcloud.edit", p).is_ok()
     {
         // One undo step for the whole edit.
-        if app.session.undo.len() > m.depth + 1 {
-            let keep = app.session.undo.get(m.depth).cloned();
-            app.session.undo.truncate(m.depth);
-            app.session.undo.extend(keep);
-        }
+        app.session.history.fold_since(m.mark);
     }
     app.tree.cloud_panel = if closed || action == ui_kit::Action::Cancel { None } else { Some(m) };
 }

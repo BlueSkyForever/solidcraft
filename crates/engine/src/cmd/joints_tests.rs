@@ -1122,11 +1122,11 @@ fn hidden_joints_still_drive_and_are_saved_with_the_design() {
     let mut s = hinged();
     let (hinge, glue) = (joint(&s, "Hinge"), joint(&s, "Glue"));
     run(&mut s, "file.save", json!({"path": path}));
-    let undo = s.undo.len();
+    let undo = s.history.len();
     let r = run(&mut s, "browser.visibility", json!({"joints": ["Hinge"], "visible": false}));
     assert_eq!(r["changed"], 1, "{r}");
     assert!(!s.joint_visible(hinge) && s.joint_visible(glue));
-    assert_eq!(s.undo.len(), undo + 1, "hiding is one undo step");
+    assert_eq!(s.history.len(), undo + 1, "hiding is one undo step");
     assert!(s.is_dirty(), "hiding leaves unsaved changes");
     let l = run(&mut s, "joint.list", json!({}));
     assert_eq!(l["joints"].as_array().unwrap().iter().map(|j| j["visible"].clone()).collect::<Vec<_>>(), [json!(false), json!(true)]);
