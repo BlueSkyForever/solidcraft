@@ -1,0 +1,122 @@
+{
+  "en": {
+    "ui.3d_mouse_use_direct": "Use Direct Driver",
+    "ui.3d_mouse_use_direct_tip": "Read the 3D mouse directly (hidraw) instead of through spacenavd."
+  },
+  "ar": {
+    "ui.3d_mouse_use_direct": "المشغل المباشر",
+    "ui.3d_mouse_use_direct_tip": "قراءة الفأرة ثلاثية الأبعاد مباشرة (hidraw) بدلًا من المرور عبر spacenavd."
+  },
+  "bs": {
+    "ui.3d_mouse_use_direct": "Koristi direktni drajver",
+    "ui.3d_mouse_use_direct_tip": "Čitaj 3D miš direktno (hidraw) umjesto preko spacenavd."
+  },
+  "cs": {
+    "ui.3d_mouse_use_direct": "Použít přímý ovladač",
+    "ui.3d_mouse_use_direct_tip": "Číst 3D myš přímo (hidraw) místo přes spacenavd."
+  },
+  "da": {
+    "ui.3d_mouse_use_direct": "Brug direkte driver",
+    "ui.3d_mouse_use_direct_tip": "Læs 3D-musen direkte (hidraw) i stedet for gennem spacenavd."
+  },
+  "de": {
+    "ui.3d_mouse_use_direct": "Direkten Treiber verwenden",
+    "ui.3d_mouse_use_direct_tip": "Die 3D-Maus direkt lesen (hidraw) statt über spacenavd."
+  },
+  "es": {
+    "ui.3d_mouse_use_direct": "Usar controlador directo",
+    "ui.3d_mouse_use_direct_tip": "Leer el ratón 3D directamente (hidraw) en lugar de a través de spacenavd."
+  },
+  "fr": {
+    "ui.3d_mouse_use_direct": "Utiliser le pilote direct",
+    "ui.3d_mouse_use_direct_tip": "Lire la souris 3D directement (hidraw) au lieu de passer par spacenavd."
+  },
+  "gl": {
+    "ui.3d_mouse_use_direct": "Usar controlador directo",
+    "ui.3d_mouse_use_direct_tip": "Ler o rato 3D directamente (hidraw) en vez de a través de spacenavd."
+  },
+  "he": {
+    "ui.3d_mouse_use_direct": "שימוש במנהל ישיר",
+    "ui.3d_mouse_use_direct_tip": "קריאת העכבר התלת־ממדי ישירות (hidraw) במקום דרך spacenavd."
+  },
+  "hr": {
+    "ui.3d_mouse_use_direct": "Koristi izravni upravljački program",
+    "ui.3d_mouse_use_direct_tip": "Čitaj 3D miš izravno (hidraw) umjesto preko spacenavd."
+  },
+  "hu": {
+    "ui.3d_mouse_use_direct": "Közvetlen illesztőprogram",
+    "ui.3d_mouse_use_direct_tip": "A 3D-egér közvetlen olvasása (hidraw) a spacenavd helyett."
+  },
+  "id": {
+    "ui.3d_mouse_use_direct": "Gunakan driver langsung",
+    "ui.3d_mouse_use_direct_tip": "Baca mouse 3D secara langsung (hidraw), bukan melalui spacenavd."
+  },
+  "it": {
+    "ui.3d_mouse_use_direct": "Usa driver diretto",
+    "ui.3d_mouse_use_direct_tip": "Leggi il mouse 3D direttamente (hidraw) invece che tramite spacenavd."
+  },
+  "ja": {
+    "ui.3d_mouse_use_direct": "直接ドライバーを使用",
+    "ui.3d_mouse_use_direct_tip": "spacenavd を経由せず、3Dマウスを直接 (hidraw) 読み取ります。"
+  },
+  "ko": {
+    "ui.3d_mouse_use_direct": "직접 드라이버 사용",
+    "ui.3d_mouse_use_direct_tip": "spacenavd를 거치지 않고 3D 마우스를 직접(hidraw) 읽습니다."
+  },
+  "ms": {
+    "ui.3d_mouse_use_direct": "Guna pemacu terus",
+    "ui.3d_mouse_use_direct_tip": "Baca tetikus 3D secara terus (hidraw) dan bukan melalui spacenavd."
+  },
+  "nb": {
+    "ui.3d_mouse_use_direct": "Bruk direkte driver",
+    "ui.3d_mouse_use_direct_tip": "Les 3D-musen direkte (hidraw) i stedet for gjennom spacenavd."
+  },
+  "nl": {
+    "ui.3d_mouse_use_direct": "Direct stuurprogramma gebruiken",
+    "ui.3d_mouse_use_direct_tip": "De 3D-muis direct uitlezen (hidraw) in plaats van via spacenavd."
+  },
+  "pl": {
+    "ui.3d_mouse_use_direct": "Użyj sterownika bezpośredniego",
+    "ui.3d_mouse_use_direct_tip": "Odczytuj mysz 3D bezpośrednio (hidraw) zamiast przez spacenavd."
+  },
+  "pt-BR": {
+    "ui.3d_mouse_use_direct": "Usar driver direto",
+    "ui.3d_mouse_use_direct_tip": "Ler o mouse 3D diretamente (hidraw) em vez de pelo spacenavd."
+  },
+  "ro": {
+    "ui.3d_mouse_use_direct": "Folosește driverul direct",
+    "ui.3d_mouse_use_direct_tip": "Citește mouse-ul 3D direct (hidraw) în loc de prin spacenavd."
+  },
+  "ru": {
+    "ui.3d_mouse_use_direct": "Использовать прямой драйвер",
+    "ui.3d_mouse_use_direct_tip": "Читать 3D-мышь напрямую (hidraw), а не через spacenavd."
+  },
+  "sr": {
+    "ui.3d_mouse_use_direct": "Користи директни драјвер",
+    "ui.3d_mouse_use_direct_tip": "Читај 3D миш директно (hidraw) уместо преко spacenavd."
+  },
+  "sv": {
+    "ui.3d_mouse_use_direct": "Använd direkt drivrutin",
+    "ui.3d_mouse_use_direct_tip": "Läs 3D-musen direkt (hidraw) i stället för via spacenavd."
+  },
+  "tr": {
+    "ui.3d_mouse_use_direct": "Doğrudan sürücüyü kullan",
+    "ui.3d_mouse_use_direct_tip": "3D fareyi spacenavd yerine doğrudan (hidraw) oku."
+  },
+  "uk": {
+    "ui.3d_mouse_use_direct": "Використати прямий драйвер",
+    "ui.3d_mouse_use_direct_tip": "Читати 3D-мишу напряму (hidraw), а не через spacenavd."
+  },
+  "vi": {
+    "ui.3d_mouse_use_direct": "Dùng trình điều khiển trực tiếp",
+    "ui.3d_mouse_use_direct_tip": "Đọc chuột 3D trực tiếp (hidraw) thay vì qua spacenavd."
+  },
+  "zh": {
+    "ui.3d_mouse_use_direct": "使用直接驱动",
+    "ui.3d_mouse_use_direct_tip": "直接读取 3D 鼠标（hidraw），不经过 spacenavd。"
+  },
+  "zh-TW": {
+    "ui.3d_mouse_use_direct": "使用直接驅動",
+    "ui.3d_mouse_use_direct_tip": "直接讀取 3D 滑鼠（hidraw），不經過 spacenavd。"
+  }
+}

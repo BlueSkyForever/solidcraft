@@ -7,6 +7,11 @@ scenario fixture does not change engine state or open a dialog. `off` clears it.
 The published `viewport_status:<id>:item`, `:setting`, `:key` and `:close` handles
 support the ordinary `ui.at`, `ui.move`, `ui.click` and keyboard controls.
 
+Toasts the user may close have a close (×) at their top right instead of a Close button, published
+as `toast:<name>:close`: `toast:status:close`, `toast:space_mouse_offer:close` and
+`toast:stand_up:close` (#7971). Those that go by themselves draw a thin ring around it that
+shrinks over their time; the ring is full again while the pointer is on a toast that waits for it.
+
 The control channel is **on by default**. SolidCraft listens on `127.0.0.1` only, for JSON lines,
 so agents can drive the app without a launch flag. Every connection still needs this launch's
 token (below); nothing else on the machine, and nothing off it, can send a command.
@@ -448,7 +453,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `sketch_tab_always` (default false: the SKETCH tab stays in the ribbon right after MODEL while no sketch is open; a tool in its CREATE or REFERENCE section then opens Create Sketch, on the selected plane or planar face or else on the plane picked next, and starts in the new sketch, #7904)
 - `smooth_wheel_zoom` (default true)
 - `space_mouse_model_pivot` (default false: Classic orbit around the view's centre; true opts into Traced orbit around the model for the 3D mouse and navigation bridge)
-- `stand_up_unknown` (`note` (default: a file whose header names no program known to save Y up and whose bodies seem to lie on their back (their flat area across Y outweighs their flat area facing down Z) gets a small note over the view, "Did this part open the wrong way up?", with Stand it up, Don't ask again and Close as the handles `stand_up:stand`, `stand_up:never` and `stand_up:dismiss`; it goes by itself after 10 seconds and never blocks input), `ask` (the "Stand this part up?" dialog for every file from another program, SolidWorks too, without looking at how it rests, as before #7717), `off` (no offer); otherwise a SolidWorks file gets the dialog, or the note when its bodies clearly stand on Z already)
+- `stand_up_unknown` (`note` (default: a file whose header names no program known to save Y up and whose bodies seem to lie on their back (their flat area across Y outweighs their flat area facing down Z) gets a small note over the view, "Did this part open the wrong way up?", with Stand it up and Don't ask again as the handles `stand_up:stand` and `stand_up:never`, and its close (×) as `toast:stand_up:close` (also `stand_up:dismiss`); it goes by itself after 10 seconds and never blocks input), `ask` (the "Stand this part up?" dialog for every file from another program, SolidWorks too, without looking at how it rests, as before #7717), `off` (no offer); otherwise a SolidWorks file gets the dialog, or the note when its bodies clearly stand on Z already)
 - `status_bar` (default false: a thin bar along the window's bottom edge, below History, handle `status:bar`: what is being edited (`status:editing`), the open sketch's state in its colour (`status:sketch`) and the design's units (`status:units`, a click opens the Units menu, whose rows run `document.units`); the sketch's state then leaves the view's top-left corner, #7243)
 - `step_values` (default false: Up/Down and the wheel step a plain number in a focused value field)
 - `theme` (`dark`, `light`, `system` or a theme file's id: a built-in one such as `gruvbox-dark`, or an imported one; the reply's `theme_ids` lists them)
@@ -457,7 +462,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `theme_import` (a `solidcraft-theme/1` file's JSON or text: adds the theme and turns it on; the reply's `theme_imported` is its id)
 - `theme_remove` (an imported theme's id)
 - `timeline_origin_bodies` (default false: the History on the left or under the browser starts with the active component's Bodies folder and the Origin, the browser's rows with their eyes, folds and menus; the bottom History is unchanged)
-- `toast_place` (`corner` (default: notices and offers stack in one column in the view's bottom-right corner, each 340 points wide, buttons right-aligned with the main action right-most, #7893), `centre` (at the bottom centre above the view toolbar, each as wide as its text, as before))
+- `toast_place` (`corner` (default: notices and offers stack in one column in the view's bottom-right corner, each 400 points wide, buttons right-aligned with the main action right-most, #7893), `centre` (at the bottom centre above the view toolbar, each as wide as its text, as before))
 - `trackpad_pan` (default true: two-finger scroll pans, except Touchpad always zooms; pinch zooms)
 - `trackpad_zoom_modifier` (`off` default, `cmd`, `alt`, or `ctrl`: hold this key alone for vertical scroll to zoom)
 - `ui_font` (an installed font family or a font file for the interface; empty for the built-in font)

@@ -582,12 +582,7 @@ fn the_shared_toast_draws_old_callers_exactly_as_before() {
 /// holds CAD input.
 #[test]
 fn toast_buttons_wrap_inside_the_card_and_are_dead_behind_an_issue_report() {
-    let labels = [
-        ("Calibrate…", ToastKind::Primary),
-        ("Swap to Hidraw (Direct Driver)", ToastKind::Secondary),
-        ("Close", ToastKind::Dismiss),
-        ("Never show again", ToastKind::Dismiss),
-    ];
+    let labels = [("Calibrate…", ToastKind::Primary), ("Use Direct Driver", ToastKind::Secondary), ("Never show again", ToastKind::Dismiss)];
     for width in [260.0_f32, 360.0, 600.0, 1000.0] {
         for blocked in [false, true] {
             crate::issue_report::set_cad_input_blocked_for_test(blocked);
@@ -632,7 +627,7 @@ fn toast_buttons_wrap_inside_the_card_and_are_dead_behind_an_issue_report() {
             } else {
                 hits.sort_unstable();
                 hits.dedup();
-                assert_eq!(hits, [0, 1, 2, 3], "width {width}: every button can be clicked inside the card");
+                assert_eq!(hits, [0, 1, 2], "width {width}: every button can be clicked inside the card");
             }
         }
     }
@@ -1534,4 +1529,83 @@ fn analysis_status_preferences_restore_false_keeps_underlying_dialog_through_the
     assert!(h.app.session.analysis.is_some());
     h.step(&json!({"key":"Escape"})).unwrap();
     assert!(h.app.session.analysis.is_some(), "the restored legacy policy keeps shading on idle Escape");
+}
+
+/// The countdown ring around a toast's × (#7971) is the share of its time left: whole when it
+/// starts, half at half time, gone when it is over, and whole for times no clock gives.
+#[test]
+fn the_countdown_ring_follows_the_time_left() {
+    assert_eq!(countdown_left(10.0, 10.0, 6.0), 1.0);
+    assert!((countdown_left(10.0, 13.0, 6.0) - 0.5).abs() < 1e-6);
+    assert!((countdown_left(0.0, 1.5, 6.0) - 0.75).abs() < 1e-6);
+    assert_eq!(countdown_left(10.0, 16.0, 6.0), 0.0);
+    assert_eq!(countdown_left(10.0, 99.0, 6.0), 0.0);
+    assert_eq!(countdown_left(10.0, 5.0, 6.0), 1.0, "a start in the future");
+    for (since, now, lifetime) in [(f64::NAN, 1.0, 6.0), (0.0, f64::INFINITY, f64::INFINITY), (0.0, 1.0, 0.0), (0.0, 0.0, 0.0)] {
+        let left = countdown_left(since, now, lifetime);
+        assert!((0.0..=1.0).contains(&left), "{since} {now} {lifetime}: {left}");
+    }
+    // The arc: from twelve o'clock, clockwise (y down), over that share of a turn, on the ring.
+    let centre = pos2(100.0, 50.0);
+    for left in [1.0_f32, 0.75, 0.5, 0.25, 0.01] {
+        let arc = countdown_arc(centre, 10.0, left);
+        assert!(arc.len() >= 2, "{left}");
+        assert!(arc.iter().all(|p| ((*p - centre).length() - 10.0).abs() < 1e-3), "{left}: on the ring");
+        assert!((arc[0] - pos2(100.0, 40.0)).length() < 1e-3, "starts at twelve o'clock");
+        assert!((swept(&arc, centre) - left).abs() < 1e-3, "{left}: sweeps {}", swept(&arc, centre));
+    }
+    assert!((countdown_arc(centre, 10.0, 0.25).last().copied().unwrap() - pos2(110.0, 50.0)).length() < 1e-3, "a quarter ends at three o'clock");
+    for bad in [0.0_f32, -1.0, f32::NAN] {
+        assert!(countdown_arc(centre, 10.0, bad).is_empty(), "{bad}");
+    }
+    assert!(countdown_arc(centre, f32::NAN, 0.5).is_empty() && countdown_arc(centre, 0.0, 0.5).is_empty());
+}
+
+/// The share of a turn an arc of `points` sweeps clockwise (y down) round `centre`.
+fn swept(points: &[Pos2], centre: Pos2) -> f32 {
+    let turn = std::f32::consts::TAU;
+    points.windows(2).map(|w| ((w[1] - centre).angle() - (w[0] - centre).angle()).rem_euclid(turn)).sum::<f32>() / turn
+}
+
+/// The status toast has a close (×) at its top right and no Close button (#7971): the × closes it
+/// without opening the run's messages (a click elsewhere on it still does), its ring shows the
+/// share of its six seconds left, and behind an issue report the × does nothing.
+#[test]
+fn the_status_toast_closes_with_its_x_and_shows_its_time_left() {
+    let t = Tokens::get();
+    let mut h = Harness::new();
+    h.app.home.open = false;
+    // Half its time gone.
+    h.app.status = Some(("Opened".into(), crate::now_ms() - STATUS_TOAST_MS / 2.0, false));
+    h.frames(2);
+    let toast = crate::scenario::rect_of("toast").expect("the status toast");
+    let close = crate::scenario::handle_at("toast:status:close").expect("its ×");
+    assert!(toast.contains(close) && close.x > toast.center().x && close.y <= toast.center().y + 1.0, "top right: {close:?} in {toast:?}");
+    fn ring(shape: &Shape, ink: Color32) -> Option<Vec<Pos2>> {
+        match shape {
+            Shape::Path(p) if !p.closed && p.stroke.color == egui::epaint::ColorMode::Solid(ink) && p.points.len() >= 2 => Some(p.points.clone()),
+            Shape::Vec(shapes) => shapes.iter().find_map(|s| ring(s, ink)),
+            _ => None,
+        }
+    }
+    let arc = h.shapes.iter().find_map(|s| ring(&s.shape, t.text_dim)).expect("the ring is drawn");
+    assert!((swept(&arc, close) - 0.5).abs() < 0.05, "about half a turn left: {}", swept(&arc, close));
+    assert!(h.widget("Close").is_some(), "the × has an accessible name");
+    // Behind an issue report it does nothing.
+    crate::issue_report::set_cad_input_blocked_for_test(true);
+    h.step(&json!({"click": {"handle": "toast:status:close"}})).unwrap();
+    h.frames(2);
+    crate::issue_report::set_cad_input_blocked_for_test(false);
+    assert!(h.app.status.is_some(), "not closed behind a report");
+    h.step(&json!({"click": {"handle": "toast:status:close"}})).unwrap();
+    h.frames(2);
+    assert!(h.app.status.is_none(), "closed");
+    assert!(!h.app.messages.open, "the × doesn't open the messages");
+    assert!(crate::scenario::rect_of("toast").is_none());
+    // A click elsewhere on it still opens them.
+    h.app.status = Some(("Opened".into(), crate::now_ms(), false));
+    h.frames(2);
+    h.step(&json!({"click": {"handle": "status:chip"}})).unwrap();
+    h.frames(2);
+    assert!(h.app.messages.open, "the card opens the messages");
 }

@@ -5022,19 +5022,30 @@ pub(crate) fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Re
     // (#7717): the shared toast with its buttons, which go by themselves and never block input.
     if let Some(text) = crate::stand_up::note_due(app, ui.ctx()) {
         let labels = crate::stand_up::note_labels();
-        let actions =
-            [(labels[0].as_str(), ToastKind::Primary), (labels[1].as_str(), ToastKind::Secondary), (labels[2].as_str(), ToastKind::Dismiss)];
-        if let Some((r, clicked, buttons)) = paint_toast_with(ui, free, text, ToastLead::Dot(false), &actions) {
+        let actions = [(labels[0].as_str(), ToastKind::Primary), (labels[1].as_str(), ToastKind::Secondary)];
+        let [close, dismiss] = crate::stand_up::NOTE_CLOSE_HANDLES;
+        let extras = ToastExtras {
+            close: Some(close),
+            countdown: Some((crate::stand_up::note_left(app, ui.ctx()), crate::stand_up::NOTE_SECONDS)),
+            ..Default::default()
+        };
+        if let Some(toast) = paint_toast_ext(ui, free, text, ToastLead::Dot(false), &actions, extras) {
+            let r = toast.rect;
             crate::scenario::publish_rect("toast:stand_up", r);
-            for (handle, button) in crate::stand_up::NOTE_HANDLES.iter().zip(&buttons) {
+            for (handle, button) in crate::stand_up::NOTE_HANDLES.iter().zip(&toast.buttons) {
                 crate::scenario::publish_handle(handle, button.center());
+            }
+            if let Some(at) = toast.close {
+                crate::scenario::publish_handle(dismiss, at.center());
             }
             obstacles.push(r);
             free.max.y = r.top() - t.space_8;
             shown.push(r);
             crate::stand_up::note_keep(app, ui.ctx(), r);
-            if let Some(index) = clicked {
+            if let Some(index) = toast.clicked {
                 crate::stand_up::note_act(app, index);
+            } else if toast.closed {
+                crate::stand_up::leave(app);
             }
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
@@ -5043,14 +5054,25 @@ pub(crate) fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Re
     if let Some(offer) = crate::space_mouse_offer::due(app, ui.ctx()) {
         let labels: Vec<String> = offer.actions.iter().map(|action| crate::i18n::tr(action.label()).to_string()).collect();
         let labels: Vec<(&str, ToastKind)> = labels.iter().map(String::as_str).zip(offer.actions.iter().map(|action| action.kind())).collect();
-        if let Some((r, clicked, _)) = paint_toast_with(ui, free, crate::i18n::tr("ui.3d_mouse_offer").to_string(), ToastLead::Dot(false), &labels) {
+        let tips: Vec<&str> = offer.actions.iter().map(|action| action.tip().map_or("", crate::i18n::tr)).collect();
+        let extras = ToastExtras {
+            close: Some("toast:space_mouse_offer:close"),
+            countdown: Some((crate::space_mouse_offer::left(app, ui.ctx()), crate::space_mouse_offer::SHOW_SECONDS)),
+            tips: &tips,
+            ..Default::default()
+        };
+        if let Some(toast) = paint_toast_ext(ui, free, crate::i18n::tr("ui.3d_mouse_offer").to_string(), ToastLead::Dot(false), &labels, extras) {
+            let r = toast.rect;
             crate::scenario::publish_rect("toast:space_mouse_offer", r);
             obstacles.push(r);
             free.max.y = r.top() - t.space_8;
             shown.push(r);
             crate::space_mouse_offer::keep(app, ui.ctx(), r);
-            if let Some(action) = clicked.and_then(|i| offer.actions.get(i)) {
-                crate::space_mouse_offer::act(app, ui.ctx(), &offer, *action);
+            // The close (×) does what the Close button did (#7971).
+            let action =
+                if toast.closed { Some(crate::space_mouse_offer::Action::Close) } else { toast.clicked.and_then(|i| offer.actions.get(i).copied()) };
+            if let Some(action) = action {
+                crate::space_mouse_offer::act(app, ui.ctx(), &offer, action);
             }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
         }
@@ -5067,8 +5089,16 @@ pub(crate) fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Re
         if shown_ms < STATUS_TOAST_MS {
             let undo = app.status_undo;
             let actions = if undo { vec![(crate::i18n::tr_label("Undo"), ToastKind::Secondary)] } else { Vec::new() };
-            if let Some((r, clicked, _)) = paint_toast_with(ui, free, msg, ToastLead::Dot(error), &actions) {
-                if undo && clicked == Some(0) {
+            let extras = ToastExtras {
+                close: Some("toast:status:close"),
+                countdown: Some((countdown_left(0.0, shown_ms / 1000.0, STATUS_TOAST_MS / 1000.0), STATUS_TOAST_MS / 1000.0)),
+                // Without Undo, a click anywhere else on it opens the run's messages.
+                card_hint: (!undo).then(|| crate::i18n::tr("messages.chip_hint")),
+                ..Default::default()
+            };
+            if let Some(toast) = paint_toast_ext(ui, free, msg, ToastLead::Dot(error), &actions, extras) {
+                let r = toast.rect;
+                if undo && toast.clicked == Some(0) {
                     app.status = None;
                     app.status_undo = false;
                     let _ = app.run("edit.undo", json!({}));
@@ -5079,10 +5109,12 @@ pub(crate) fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Re
                 shown.push(r);
                 // Open the run's messages from the tokenised status toast.
                 crate::scenario::publish_handle("status:chip", r.center());
-                if !undo
-                    && ui.interact(r, egui::Id::new("sc_status_chip"), Sense::click()).on_hover_text(crate::i18n::tr("messages.chip_hint")).clicked()
-                {
+                if toast.card_clicked {
                     app.messages.open = true;
+                }
+                if toast.closed {
+                    app.status = None;
+                    app.status_undo = false;
                 }
             }
             // One frame when it is due to go, not a frame every half second while it shows.
@@ -5136,8 +5168,9 @@ impl ToastPlace {
     }
 }
 
-/// Every toast's width in the corner stack: room for three buttons on one row; longer text wraps.
-pub(crate) const TOAST_WIDTH: f32 = 340.0;
+/// Every toast's width in the corner stack: room for three buttons on one row (the 3D mouse offer's
+/// Calibrate…, Use Direct Driver and Never show again, #7971); longer text wraps.
+pub(crate) const TOAST_WIDTH: f32 = 400.0;
 
 /// Where the corner stack may go: the largest free rect in a `TOAST_WIDTH` column at the right of
 /// `view`, clear of `obstacles` (the axis view and cube at the top, the view toolbar when a narrow
@@ -5273,11 +5306,8 @@ fn paint_toast(ui: &egui::Ui, free: Rect, text: String, error: bool, computing: 
     paint_toast_with(ui, free, text, lead, &[]).map(|(rect, _, _)| rect)
 }
 
-/// The one toast painter: its text in a card at the bottom centre of `free`, led by a dot or a
-/// spinner, and, below the text, a wrapping row of buttons (`actions`, kit buttons). Returns the
-/// card's rect, which button was clicked, if any, and where each button is (for handles). With no actions the card is exactly the status
-/// and computing toast it always was. The buttons are not live while an issue report holds CAD
-/// input; none is laid outside the card, whose width is bounded by `free`.
+/// [`paint_toast_ext`] with no close (×), countdown, hover texts or card click: the card, which
+/// button was clicked, if any, and where each button is.
 fn paint_toast_with(
     ui: &egui::Ui,
     free: Rect,
@@ -5285,6 +5315,111 @@ fn paint_toast_with(
     lead: ToastLead,
     actions: &[(&str, ToastKind)],
 ) -> Option<(Rect, Option<usize>, Vec<Rect>)> {
+    paint_toast_ext(ui, free, text, lead, actions, ToastExtras::default()).map(|toast| (toast.rect, toast.clicked, toast.buttons))
+}
+
+/// What a toast has besides its text and buttons (#7971).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ToastExtras<'a> {
+    /// A close (×) in its top-right corner, published as this control-channel handle
+    /// (`toast:<name>:close`). Every toast the user may close has one, in place of a Close button.
+    pub close: Option<&'a str>,
+    /// For a toast that goes by itself: the share of its time left (1 to 0) and its whole time in
+    /// seconds, drawn as a thin ring around the × that shrinks over its time.
+    pub countdown: Option<(f32, f64)>,
+    /// Hover texts of the buttons, by index; an empty one has none.
+    pub tips: &'a [&'a str],
+    /// The whole card answers a click, under its buttons and ×, with this hover text.
+    pub card_hint: Option<&'a str>,
+}
+
+/// A toast as drawn: its card, which button was clicked, if any, where each button and the × are
+/// (for handles), and whether the × or the card itself was clicked.
+pub(crate) struct ToastShown {
+    pub rect: Rect,
+    pub clicked: Option<usize>,
+    pub buttons: Vec<Rect>,
+    pub close: Option<Rect>,
+    pub closed: bool,
+    pub card_clicked: bool,
+}
+
+/// The share of a countdown of `lifetime` seconds left at `now` when it started at `since`: 1 when
+/// it starts, 0 when it is over, and 1 for times no clock gives (non-finite, or a start in the future).
+pub(crate) fn countdown_left(since: f64, now: f64, lifetime: f64) -> f32 {
+    let left = 1.0 - (now - since) / lifetime;
+    if left.is_finite() { left.clamp(0.0, 1.0) as f32 } else { 1.0 }
+}
+
+/// The countdown ring's radius around a toast's ×; the × is drawn inside it and its hit target is
+/// the ring's square.
+fn toast_close_radius() -> f32 {
+    Tokens::get().space_10
+}
+
+/// The points of the countdown ring: an arc of `left` of a turn round `centre`, from twelve o'clock
+/// clockwise, so it shrinks back towards twelve o'clock as the time goes. Empty when nothing is left.
+pub(crate) fn countdown_arc(centre: Pos2, radius: f32, left: f32) -> Vec<Pos2> {
+    let left = if left.is_finite() { left.clamp(0.0, 1.0) } else { 0.0 };
+    if left <= 0.0 || !radius.is_finite() || radius <= 0.0 {
+        return Vec::new();
+    }
+    // One segment per 7.5 degrees of the arc, at least one.
+    let segments = ((48.0 * left).ceil() as usize).max(1);
+    (0..=segments)
+        .map(|i| {
+            let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * left * i as f32 / segments as f32;
+            centre + radius * vec2(angle.cos(), angle.sin())
+        })
+        .collect()
+}
+
+/// A toast's close (×) at `rect`, with its countdown ring when `left` is given: a kit-drawn button
+/// with an accessible name and hover text (`ui.close`), reachable by Tab and taken with Enter or Space.
+fn toast_close(ui: &egui::Ui, rect: Rect, id: egui::Id, left: Option<f32>) -> egui::Response {
+    let t = Tokens::get();
+    let response = ui.interact(rect, id, Sense::click());
+    let painter = ui.painter();
+    let centre = rect.center();
+    let radius = rect.width().min(rect.height()) * 0.5;
+    let lit = response.hovered() || response.has_focus();
+    if lit && ui.is_enabled() {
+        painter.circle_filled(centre, radius, t.hover);
+    }
+    if response.has_focus() {
+        painter.circle_stroke(centre, radius + t.space_2, Stroke::new(1.0, t.form_primary));
+    }
+    if let Some(left) = left {
+        let arc = countdown_arc(centre, radius - 0.75, left);
+        if arc.len() >= 2 {
+            painter.add(egui::Shape::line(arc, Stroke::new(1.5, t.text_dim)));
+        }
+    }
+    let ink = if lit && ui.is_enabled() { t.text } else { t.text_dim };
+    crate::icons::paint_ink(painter, Rect::from_center_size(centre, vec2(t.space_10, t.space_10)), "close", ink);
+    let label = crate::i18n::tr("ui.close");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    if response.hovered() && ui.is_enabled() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response.on_hover_text(label)
+}
+
+/// The one toast painter: its text in a card at the bottom centre of `free`, led by a dot or a
+/// spinner, and, below the text, a wrapping row of buttons (`actions`, kit buttons), with what
+/// `extras` adds (a close (×) at the top right with its countdown ring, hover texts, a click on the
+/// card). Returns the card, which button was clicked, if any, and where each button is (for
+/// handles). With no actions and no extras the card is exactly the status and computing toast it
+/// always was. The buttons and the × are not live while an issue report holds CAD input; none is
+/// laid outside the card, whose width is bounded by `free`.
+fn paint_toast_ext(
+    ui: &egui::Ui,
+    free: Rect,
+    text: String,
+    lead: ToastLead,
+    actions: &[(&str, ToastKind)],
+    extras: ToastExtras<'_>,
+) -> Option<ToastShown> {
     // Rects no screen has are rejected too: the corner layout anchors to `free`'s right edge.
     if !free.is_finite() || !free.is_positive() || free.width() <= 40.0 || free.max.x.abs().max(free.max.y.abs()) > 1.0e7 {
         return None;
@@ -5295,7 +5430,10 @@ fn paint_toast_with(
     // In the corner every toast is `TOAST_WIDTH` wide (or the room there is); at the centre each
     // is as wide as its text, up to 440 points.
     let wrap = if corner { (TOAST_WIDTH.min(free.width()) - 40.0).max(0.0) } else { (free.width() - 40.0).min(440.0) };
-    let galley = painter.layout(text, crate::fonts::medium(t.font_label), t.text, wrap);
+    // The × keeps the top-right corner: the text stops short of its ring.
+    let radius = toast_close_radius();
+    let close_room = if extras.close.is_some() { 2.0 * radius + t.space_4 + t.space_8 - 12.0 } else { 0.0 };
+    let galley = painter.layout(text, crate::fonts::medium(t.font_label), t.text, (wrap - close_room).max(0.0));
     // The buttons: each as wide as its text and a margin, in rows no wider than the text may be.
     let gap = t.space_8;
     let button_height = crate::ui_kit::row_height();
@@ -5316,10 +5454,13 @@ fn paint_toast_with(
     let widest = spots.iter().map(|spot| spot.right()).fold(0.0, f32::max);
     let y = spots.iter().map(|spot| spot.top()).fold(0.0, f32::max);
     let actions_height = if spots.is_empty() { 0.0 } else { y + button_height + gap };
-    let content = vec2(galley.size().x.max(widest), galley.size().y + actions_height);
+    let content = vec2((galley.size().x + close_room).max(widest), galley.size().y + actions_height);
     let mut size = content + vec2(40.0, 16.0);
     if corner {
         size.x = row_width + 40.0;
+    }
+    if extras.close.is_some() {
+        size.y = size.y.max(2.0 * radius + 12.0);
     }
     if !size.is_finite() || size.x > free.width() || size.y > free.height() {
         return None;
@@ -5338,6 +5479,13 @@ fn paint_toast_with(
     }
     let text_top = r.min + vec2(28.0, 8.0);
     painter.galley(text_top, galley.clone(), t.text);
+    // The card's own click goes first, so its buttons and × (added after it) take theirs. Behind an
+    // issue report it is dead too, so a click on the dead × doesn't fall through to it.
+    let blocked = crate::issue_report::cad_input_blocked();
+    let card_clicked = extras.card_hint.is_some_and(|hint| {
+        let sense = if blocked { Sense::hover() } else { Sense::click() };
+        ui.interact(r, egui::Id::new(("sc_toast_card", extras.close.unwrap_or_default())), sense).on_hover_text(hint).clicked()
+    });
     let mut clicked = None;
     let mut buttons = Vec::with_capacity(actions.len());
     let origin = text_top + vec2(0.0, galley.size().y + gap);
@@ -5351,18 +5499,49 @@ fn paint_toast_with(
         );
         button_ui.set_clip_rect(button_ui.clip_rect().intersect(r));
         let response = button_ui
-            .add_enabled_ui(!crate::issue_report::cad_input_blocked(), |ui| match kind {
+            .add_enabled_ui(!blocked, |ui| match kind {
                 ToastKind::Primary => crate::ui_kit::primary_button(ui, label),
                 ToastKind::Secondary => crate::ui_kit::button(ui, *label, crate::ui_kit::Button::Normal),
                 ToastKind::Dismiss => crate::ui_kit::button(ui, *label, crate::ui_kit::Button::Small),
             })
             .inner;
+        let response = match extras.tips.get(index).filter(|tip| !tip.is_empty()) {
+            Some(tip) => response.on_hover_text(*tip),
+            None => response,
+        };
         if response.clicked() {
             clicked = Some(index);
         }
         buttons.push(response.rect);
     }
-    Some((r, clicked, buttons))
+    // The close (×), top right, level with the text's first line.
+    let mut close = None;
+    let mut closed = false;
+    if let Some(handle) = extras.close {
+        let line = painter.layout_no_wrap("A".into(), crate::fonts::medium(t.font_label), t.text).size().y;
+        let centre = pos2(r.right() - t.space_8 - radius, (text_top.y + line * 0.5).max(r.top() + 6.0 + radius));
+        let at = Rect::from_center_size(centre, vec2(2.0 * radius, 2.0 * radius));
+        let mut close_ui = egui::Ui::new(
+            ui.ctx().clone(),
+            egui::Id::new(("sc_toast_close_ui", handle)),
+            egui::UiBuilder::new().layer_id(ui.layer_id()).max_rect(at),
+        );
+        close_ui.set_clip_rect(close_ui.clip_rect().intersect(r));
+        if blocked {
+            close_ui.disable();
+        }
+        let left = extras.countdown.map(|(left, _)| left);
+        closed = toast_close(&close_ui, at, egui::Id::new(("sc_toast_close", handle)), left).clicked();
+        crate::scenario::publish_handle(handle, centre);
+        close = Some(at);
+        // A frame each time the ring's end moves about a point, not one per display refresh.
+        if let Some((_, lifetime)) = extras.countdown {
+            let every = lifetime / (std::f64::consts::TAU * f64::from(radius));
+            let every = if every.is_finite() { every.clamp(0.05, 1.0) } else { 1.0 };
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(every));
+        }
+    }
+    Some(ToastShown { rect: r, clicked, buttons, close, closed, card_clicked })
 }
 
 /// A click without a command: select the candidate (replacing the selection, or adding /
