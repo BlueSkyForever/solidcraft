@@ -16,6 +16,12 @@ fn harness() -> Harness {
     h
 }
 
+/// The one plane of the section (origin, normal).
+fn only_cut(h: &Harness) -> (solidcraft_engine::geom::Vec3, solidcraft_engine::geom::Vec3) {
+    let [c] = h.app.session.section[..] else { panic!("one section plane: {:?}", h.app.session.section) };
+    (c.origin, c.normal)
+}
+
 fn menu(h: &mut Harness, label: &str) {
     let items = context_menu::items(&h.app, &Target::Section);
     let item = items.iter().find(|i| i.label == label).unwrap_or_else(|| panic!("no {label} in {items:?}")).clone();
@@ -36,34 +42,34 @@ fn the_eye_hides_and_shows_the_section_and_delete_removes_it() {
     let mut h = harness();
     h.app.run("inspect.section", json!({"plane": "XZ", "offset": 15})).unwrap();
     h.frames(3);
-    let section = h.app.session.section.expect("a section");
+    let section = only_cut(&h);
     assert!(crate::scenario::handle_at("row:Section Analysis").is_some(), "the section is listed under Analysis");
 
     click(&mut h, "eye:Section Analysis");
-    assert_eq!(h.app.session.section, None, "the eye turns the section off");
+    assert!(h.app.session.section.is_empty(), "the eye turns the section off");
     assert!(crate::scenario::handle_at("row:Section Analysis").is_some(), "a hidden section stays listed");
 
     click(&mut h, "eye:Section Analysis");
-    let back = h.app.session.section.expect("the eye turns it back on");
+    let back = only_cut(&h);
     assert!((back.0 - section.0).len() < 1e-9 && (back.1 - section.1).len() < 1e-9, "the same plane: {back:?} vs {section:?}");
 
     // The folder's eye is its own: hiding it turns the section off without changing the
     // section's eye, and hiding the section doesn't change the folder's.
     click(&mut h, "eye:Analysis");
-    assert_eq!(h.app.session.section, None);
+    assert!(h.app.session.section.is_empty());
     assert!(h.app.tree.analysis_hidden && !h.app.tree.section_hidden);
     menu(&mut h, "Show/Hide");
-    assert!(h.app.session.section.is_none() && h.app.tree.section_hidden, "the menu hides the section itself");
+    assert!(h.app.session.section.is_empty() && h.app.tree.section_hidden, "the menu hides the section itself");
     assert!(h.app.tree.analysis_hidden, "the section's eye doesn't change the folder's");
     click(&mut h, "eye:Analysis");
-    assert_eq!(h.app.session.section, None, "the section was hidden on its own meanwhile");
+    assert!(h.app.session.section.is_empty(), "the section was hidden on its own meanwhile");
     assert!(!h.app.tree.analysis_hidden);
     menu(&mut h, "Show/Hide");
-    assert!(h.app.session.section.is_some(), "Show/Hide in the menu brings it back");
+    assert!(!h.app.session.section.is_empty(), "Show/Hide in the menu brings it back");
 
     menu(&mut h, "Delete");
-    assert_eq!(h.app.session.section, None);
-    assert!(h.app.tree.hidden_section.is_none());
+    assert!(h.app.session.section.is_empty());
+    assert!(h.app.tree.hidden_section.is_empty());
     assert!(crate::scenario::handle_at("row:Section Analysis").is_none(), "a deleted section leaves the browser");
 }
 
@@ -74,7 +80,7 @@ fn deleting_a_hidden_section_forgets_it() {
     h.frames(3);
     click(&mut h, "eye:Section Analysis");
     menu(&mut h, "Delete");
-    assert!(h.app.session.section.is_none() && h.app.tree.hidden_section.is_none());
+    assert!(h.app.session.section.is_empty() && h.app.tree.hidden_section.is_empty());
     assert!(crate::scenario::handle_at("row:Analysis").is_none());
 }
 
@@ -112,7 +118,7 @@ fn edit_starts_from_the_section_as_it_was_left() {
         *offset = "12 mm".into();
     }
     ok(&mut h);
-    let cut = h.app.session.section.expect("a section");
+    let cut = only_cut(&h);
     assert!((cut.0.z - 12.0).abs() < 1e-9, "{cut:?}");
 
     // The toolbar starts a new section (in place of this one), not an edit of it.
@@ -123,7 +129,7 @@ fn edit_starts_from_the_section_as_it_was_left() {
     assert!(plane.is_empty(), "a new section picks its own plane: {plane:?}");
     crate::dialogs::cancel(&mut h.app);
     h.frames(2);
-    assert!(h.app.session.section.is_some_and(|c| (c.0.z - 12.0).abs() < 1e-9), "cancelling keeps the section");
+    assert!((only_cut(&h).0.z - 12.0).abs() < 1e-9, "cancelling keeps the section");
 
     menu(&mut h, "Edit Section Analysis");
     let (offset, flip, plane) = section_dialog(&h);
@@ -164,11 +170,11 @@ fn the_hatch_option_carries_through_the_section() {
     h.frames(2);
     assert!(!crate::viewport::section_hatch(&h.app), "the preview follows the option");
     ok(&mut h);
-    assert!(h.app.session.section.is_some() && !h.app.session.section_hatch);
+    assert!(!h.app.session.section.is_empty() && !h.app.session.section_hatch);
 
     click(&mut h, "eye:Section Analysis");
     click(&mut h, "eye:Section Analysis");
-    assert!(h.app.session.section.is_some() && !h.app.session.section_hatch, "shown again, still plain");
+    assert!(!h.app.session.section.is_empty() && !h.app.session.section_hatch, "shown again, still plain");
     menu(&mut h, "Edit Section Analysis");
     let d = h.app.dialog.as_ref().map(|d| &d.kind);
     assert!(matches!(d, Some(crate::dialogs::Kind::Section { hatch: false, .. })), "{d:?}");
@@ -188,11 +194,11 @@ fn ok_with_no_plane_picked_turns_the_section_off() {
     assert!(crate::scenario::handle_at("dialog:hint:section_off").is_some(), "the dialog says OK turns the section off");
     h.step(&json!({"widget":"Cancel"})).unwrap();
     h.frames(3);
-    assert!(h.app.dialog.is_none() && h.app.session.section.is_some(), "Cancel keeps the section");
+    assert!(h.app.dialog.is_none() && !h.app.session.section.is_empty(), "Cancel keeps the section");
 
     h.app.start("inspect.section");
     ok(&mut h);
-    assert_eq!(h.app.session.section, None, "OK with no plane picked turns the section off");
+    assert!(h.app.session.section.is_empty(), "OK with no plane picked turns the section off");
     assert!(crate::scenario::handle_at("row:Section Analysis").is_none(), "the browser no longer lists it");
 
     h.app.start("inspect.section");
