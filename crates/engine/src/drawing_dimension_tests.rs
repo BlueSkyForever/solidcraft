@@ -364,6 +364,33 @@ fn a_split_edge_is_ambiguous_for_its_length_and_its_ends_still_meet() {
     assert!(!r.exact, "found through its pieces");
 }
 
+/// A hole's centre is found through its rim, exactly: 40 along and 15 up from the box's bottom
+/// front left corner. A slot across the rim leaves it several arcs, so the centre is ambiguous and
+/// none is chosen; with the hole suppressed its centre is lost.
+#[test]
+fn a_holes_centre_is_found_through_its_rim() {
+    let mut f = boxed();
+    run(&mut f.s, "solid.cylinder", json!({"radius": 6, "height": 42, "base": [40, -1, 15], "axis": "Y", "operation": "cut", "targets": ["Box"]}));
+    let hole = f.s.doc.features.last().unwrap().name.clone();
+    let rim = f.round([40.0, 0.0, 15.0], 6.0);
+    let centre = ModelPoint { body: rim.body, origin_feature: rim.origin_feature, edges: vec![rim.name], centre: true, path: Vec::new() };
+    let to_centre = |f: &mut Fixture, direction| {
+        let kind = DimensionKind::Linear { a: f.corner([0.0, 0.0, 0.0]), b: centre.clone(), direction, reading: Reading::Projected };
+        f.add(f.front, kind, None)
+    };
+    let (across, up) = (to_centre(&mut f, LinearDirection::Horizontal), to_centre(&mut f, LinearDirection::Vertical));
+    let r = f.resolve(across);
+    assert_reads(&r, 40.0, false);
+    assert!(r.exact, "{r:?}");
+    assert_reads(&f.resolve(up), 15.0, false);
+    run(&mut f.s, "solid.box", json!({"length": 2, "width": 5, "height": 30, "corner": [39, -1, 0], "operation": "cut", "targets": ["Box"]}));
+    let r = f.resolve(across);
+    assert!(matches!(&r.status, Status::Ambiguous(c) if c.len() >= 2) && r.measured.is_none(), "{r:?}");
+    run(&mut f.s, "timeline.suppress", json!({"feature": hole, "suppressed": true}));
+    let r = f.resolve(across);
+    assert!(matches!(&r.status, Status::Lost(why) if why.contains("no longer exists")), "{r:?}");
+}
+
 /// A slot through the front face splits it, and the top front edge with it; an angle is put on the
 /// piece left of the slot, square to the back left edge. With the slot suppressed the edge is whole
 /// again, and the piece's name finds it only through the face the piece was cut from: still square,

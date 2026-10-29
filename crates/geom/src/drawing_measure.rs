@@ -81,6 +81,46 @@ pub fn linear(basis: &Plane, a: Vec3, b: Vec3, direction: LinearDirection, readi
     Ok(Measured { value, foreshortened: out_of_plane(basis, d) })
 }
 
+/// What a chain of linear dimensions reads: one member from each point to the next, and the
+/// overall from the first to the last, which the members add up to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Chain {
+    pub members: Vec<Measured>,
+    pub overall: Measured,
+}
+
+/// The chain of linear dimensions through `points` (model points, in order) on the view through
+/// `basis`, every member measured along one line as the view shows it: `direction` as [`linear`]
+/// takes it, aligned being the line from the first point to the last. (A chain reads projected:
+/// the true lengths between points off one line don't add up.) The line runs the way the first
+/// point to the last goes, and each member must be more than 0 along it, so a point out of order,
+/// or lined up across the line with the one before, is refused, never moved.
+pub fn chain(basis: &Plane, points: &[Vec3], direction: LinearDirection) -> Result<Chain> {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else { return Err(Invalid("a chain has no points")) };
+    require(points.len() >= 3, "a chain is at least 3 points: 2 make one linear dimension")?;
+    let whole = segment(basis, *first, *last)?;
+    let shown = |d: Vec3| Vec2::new(d.dot(basis.x), d.dot(basis.y));
+    let line = match direction {
+        LinearDirection::Horizontal => Vec2::new(1.0, 0.0),
+        LinearDirection::Vertical => Vec2::new(0.0, 1.0),
+        LinearDirection::Aligned => shown(whole).normalized().ok_or(Invalid("the chain's first and last points are one point in this view"))?,
+        LinearDirection::Along(along) => along.normalized().ok_or(Invalid("the direction to measure along is zero or not finite"))?,
+    };
+    let line = if shown(whole).dot(line) < 0.0 { -line } else { line };
+    let members = points
+        .iter()
+        .zip(points.iter().skip(1))
+        .map(|(a, b)| {
+            let d = segment(basis, *a, *b)?;
+            let value = shown(d).dot(line);
+            require(value > EPS, "a chain's points run one way along its line: each one past the one before")?;
+            Ok(Measured { value, foreshortened: out_of_plane(basis, d) })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let overall = Measured { value: shown(whole).dot(line), foreshortened: members.iter().any(|m| m.foreshortened) };
+    Ok(Chain { members, overall })
+}
+
 /// The angle from the line `from` to `edge` (model points, from its first to its second) on the
 /// view through `basis`, from 0 to π: each line goes the way its caller gives it (from the vertex
 /// outwards), so the other side of the angle reads π minus it. A true reading is the angle

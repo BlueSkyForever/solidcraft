@@ -218,7 +218,7 @@ fn the_dimensions_rules_are_kept_on_reading() {
         |v, id| dim(v, id)["kind"]["linear"]["tolerance"] = json!(0.1),
         |v, id| dim(v, id)["kind"]["linear"]["a"]["point"] = json!([0.0, 0.0, 0.0]),
         |v, id| dim(v, id)["text"] = json!({"at": [1.0, 2.0], "angle": 3.0}),
-        |v, id| dim(v, id)["kind"] = json!({"chain": {}}),
+        |v, id| dim(v, id)["kind"] = json!({"baseline": {}}),
     ];
     for (i, edit) in unknown.into_iter().enumerate() {
         assert!(refused(&d, |v| edit(v, &linear_id)).starts_with("damaged drawing: "), "{i}");
@@ -272,6 +272,49 @@ fn a_radial_dimension_saves_its_edge_and_whether_it_is_a_diameter() {
     let names = format!("damaged drawing: dimension {radial_id}: a name in a reference is 1 to 512 bytes, without control characters");
     assert_eq!(refused(&d, |v| dim(v, &radial_id)["kind"]["radial"]["edge"]["name"] = json!("")), names);
     assert!(refused(&d, |v| dim(v, &radial_id)["kind"]["radial"]["reading"] = json!("true")).starts_with("damaged drawing: "));
+}
+
+/// A chain saves its points in order and its direction, and keeps its rules on reading: 3 to
+/// [`MAX_CHAIN_POINTS`] points, each with a point's rules, a direction to measure along that isn't
+/// zero, no reading (it reads projected) and no text instead of its members' numbers.
+#[test]
+fn a_chain_saves_its_points_in_order_and_keeps_its_rules() {
+    let (mut d, _) = measured();
+    let (view, id) = (d.views[0].id, d.allocate_id(&mut IdSource::seeded(SEED + 1)).unwrap());
+    let hole = |n: u64| {
+        let rim = format!("F{n}:hole|F1:front");
+        ModelPoint { centre: true, ..corner(&[rim.as_str()]) }
+    };
+    let points = vec![corner(&["F1:front|F1:bottom", "F1:front|F1:left"]), hole(3), hole(4), hole(5)];
+    let kind = DimensionKind::Chain { points, direction: LinearDirection::Horizontal };
+    d.add_dimensions([Arc::new(Dimension { id, view, kind, offset_mm: 8.0, text: TextPlace::Centred, decimals: 1, override_text: None })]);
+    d.validate().unwrap();
+    let chain_id = ids::encode(id);
+    let mut v = file(&d);
+    let first = json!({"body": "Box", "origin_feature": 7, "edges": ["F1:front|F1:bottom", "F1:front|F1:left"]});
+    let centre = |n: u64| json!({"body": "Box", "origin_feature": 7, "edges": [format!("F{n}:hole|F1:front")], "centre": true});
+    let saved = json!({"chain": {"points": [first, centre(3), centre(4), centre(5)], "direction": "horizontal"}});
+    assert_eq!(dim(&mut v, &chain_id)["kind"], saved);
+    assert_eq!(Drawing::from_json(&v.to_string()).unwrap(), d);
+    let rule = |rule: &str| format!("damaged drawing: dimension {chain_id}: {rule}");
+    let count = |n: usize| {
+        refused(&d, |v| {
+            let points = &mut dim(v, &chain_id)["kind"]["chain"]["points"];
+            let one = points[1].clone();
+            *points = json!(vec![one; n]);
+        })
+    };
+    let three_to = rule(&format!("a chain has 3 to {MAX_CHAIN_POINTS} points"));
+    let counts = [count(0), count(2), count(3), count(MAX_CHAIN_POINTS), count(MAX_CHAIN_POINTS + 1)];
+    assert_eq!(counts, [three_to.clone(), three_to.clone(), "read".into(), "read".into(), three_to]);
+    let two_edges = refused(&d, |v| dim(v, &chain_id)["kind"]["chain"]["points"][2]["edges"] = json!(["F3:a", "F3:b"]));
+    assert_eq!(two_edges, rule("a centre is of one named circle or arc"));
+    let zero = refused(&d, |v| dim(v, &chain_id)["kind"]["chain"]["direction"] = json!({"along": [0.0, 0.0]}));
+    assert_eq!(zero, rule("the direction to measure along is zero or not finite"));
+    let instead = refused(&d, |v| dim(v, &chain_id)["override_text"] = json!("60"));
+    assert_eq!(instead, rule("a chain shows its members' numbers, never a text instead"));
+    let reading = refused(&d, |v| dim(v, &chain_id)["kind"]["chain"]["reading"] = json!("projected"));
+    assert!(reading.starts_with("damaged drawing: "), "{reading}");
 }
 
 /// A direction along a picked line saves as its plane coordinates and reads back as the same

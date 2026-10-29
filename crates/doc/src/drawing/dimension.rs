@@ -12,6 +12,8 @@
 //!   side π minus it, whichever way the kernel runs the edges.
 //! - **Radial** (W20a): a circle's or an arc's radius, or its diameter, on a view that sees it face
 //!   on, read exactly from the body.
+//! - **Chain** (W20c): from each of its points to the next along one line, as the view shows them,
+//!   the members adding up to the overall from the first point to the last.
 //!
 //! A reference names its body, the feature that made the body (so a suppressed feature can be told
 //! from a deleted one) and its occurrence path (so a part placed twice has a dimension on each copy).
@@ -21,13 +23,14 @@
 //!
 //! The rules, beside the record's: a dimension is on one of the drawing's views; a reference names
 //! a body and its feature, and 1 to [`MAX_REFERENCE_NAME_BYTES`] bytes in each name, without control
-//! characters; a corner names 2 to [`MAX_VERTEX_EDGES`] edges, a centre one; an occurrence path is
-//! at most [`MAX_PLACEMENT_DEPTH`] ids, none 0; a true length is measured aligned; a direction to
-//! measure along isn't zero, and is at most [`MAX_REAL`] each way, as every number a drawing saves
-//! (a whole number past it reads, then saves as one the file's check refuses); the offset and the
-//! text place are on paper ([`is_paper_coordinate`]); at most [`MAX_DECIMALS`] decimals; an
-//! override text of 1 to [`MAX_TEXT_BYTES`] bytes; at most [`MAX_DIMENSIONS`] dimensions, listed by
-//! id.
+//! characters; a corner names 2 to [`MAX_VERTEX_EDGES`] edges, a centre one; a chain has 3 to
+//! [`MAX_CHAIN_POINTS`] points and shows its members' numbers, never a text instead; an occurrence
+//! path is at most [`MAX_PLACEMENT_DEPTH`] ids, none 0; a true length is measured aligned; a
+//! direction to measure along isn't zero, and is at most [`MAX_REAL`] each way, as every number a
+//! drawing saves (a whole number past it reads, then saves as one the file's check refuses); the
+//! offset and the text place are on paper ([`is_paper_coordinate`]); at most [`MAX_DECIMALS`]
+//! decimals; an override text of 1 to [`MAX_TEXT_BYTES`] bytes; at most [`MAX_DIMENSIONS`]
+//! dimensions, listed by id.
 //!
 //! [`Document::resolve_dimensions`] finds what a dimension measures again, strictly: an edge by
 //! its name, or the one edge between the faces it names, never the piece nearest an old pick; a
@@ -63,6 +66,8 @@ pub const MAX_DECIMALS: u8 = 6;
 pub const MAX_CANDIDATES: usize = 16;
 /// The longest text shown instead of a dimension's number, in bytes.
 pub const MAX_TEXT_BYTES: usize = 1024;
+/// The most points a chain of dimensions runs through.
+pub const MAX_CHAIN_POINTS: usize = 64;
 /// What a diameter's number follows: Ø (U+00D8), as tolerance texts write it. The diameter sign
 /// U+2300 isn't in the bundled fonts, so it would print as a missing glyph.
 const DIAMETER_SIGN: &str = "Ø";
@@ -111,6 +116,8 @@ pub enum DimensionKind {
         #[serde(default, skip_serializing_if = "is_false")]
         diameter: bool,
     },
+    /// The distances from each point to the next, in order along one line as the view shows them.
+    Chain { points: Vec<ModelPoint>, direction: LinearDirection },
 }
 
 /// An edge of a body, by its persistent name.
@@ -204,6 +211,13 @@ impl Drawing {
                 check_edge(b)?;
             }
             DimensionKind::Radial { edge, .. } => check_edge(edge)?,
+            DimensionKind::Chain { points, direction } => {
+                check_chain_length(points.len())?;
+                points.iter().try_for_each(check_point)?;
+                check_direction(*direction, Reading::Projected)?;
+                let instead = || "a chain shows its members' numbers, never a text instead".into();
+                require(d.override_text.is_none(), instead)?;
+            }
         }
         let off_paper = || format!("its offset and its text's place are at most {MAX_SIDE_MM} mm on paper");
         let text = match d.text {
@@ -219,6 +233,11 @@ impl Drawing {
             None => Ok(()),
         }
     }
+}
+
+/// A chain's number of points: 3 (2 make a linear dimension) to [`MAX_CHAIN_POINTS`].
+pub fn check_chain_length(points: usize) -> Result<()> {
+    require((3..=MAX_CHAIN_POINTS).contains(&points), || format!("a chain has 3 to {MAX_CHAIN_POINTS} points"))
 }
 
 /// An edge reference's rules (a balloon's edge keeps them too).
@@ -275,14 +294,25 @@ pub struct Resolved {
     pub measured: Option<Measured>,
     /// What it shows: the text given instead of its number, else the number in the drawing's
     /// units with its decimals (degrees for an angle, after R or Ø for a radius or a diameter).
-    /// `None` with neither.
+    /// `None` with neither, and for a chain, which shows its members'.
     pub text: Option<String>,
+    /// A chain's members, from its first point to its last, each as it reads and its text: empty
+    /// unless measured, and for other kinds. `measured` is then the chain's overall.
+    pub members: Vec<Member>,
     /// Every name it measures was found by exact history, each as one edge.
     pub exact: bool,
     /// What it measures, in the design's frame: a linear dimension's two points, an angle's two
-    /// lines (four points, each line from its first to its second), or a radial dimension's
-    /// centre and its arc's start, middle and end. Empty unless measured.
+    /// lines (four points, each line from its first to its second), a radial dimension's
+    /// centre and its arc's start, middle and end, or a chain's points. Empty unless measured.
     pub points: Vec<Vec3>,
+}
+
+/// One of a chain's members as the model has it now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Member {
+    pub measured: Measured,
+    /// Its number in the drawing's units with the chain's decimals.
+    pub text: String,
 }
 
 /// Where a dimension, or a balloon's edge, stands with the model.
@@ -405,9 +435,10 @@ pub(super) struct Lookup<'a> {
     named: BTreeMap<usize, BodyEdges>,
 }
 
-/// What a dimension measures, found and measured.
+/// What a dimension measures, found and measured: a chain's overall, and its members.
 struct Found {
     measured: Measured,
+    members: Vec<Measured>,
     points: Vec<Vec3>,
     exact: bool,
 }
@@ -434,19 +465,23 @@ impl<'a> Lookup<'a> {
             Err(status) => (status, None),
         };
         let measured = found.as_ref().map(|f| f.measured);
+        let length = |m: Measured| length_number(m.value, units, d.decimals);
         let number = |m: Measured| match d.kind {
-            DimensionKind::Angle { .. } => format!("{:.*}°", usize::from(d.decimals), m.value.to_degrees()),
+            DimensionKind::Angle { .. } => Some(format!("{:.*}°", usize::from(d.decimals), m.value.to_degrees())),
             DimensionKind::Radial { diameter, .. } => {
                 let symbol = if diameter { DIAMETER_SIGN } else { "R" };
-                format!("{symbol}{}", length_number(m.value, units, d.decimals))
+                Some(format!("{symbol}{}", length(m)))
             }
-            _ => length_number(m.value, units, d.decimals),
+            DimensionKind::Chain { .. } => None,
+            _ => Some(length(m)),
         };
+        let (members, points, exact) = found.map_or_else(Default::default, |f| (f.members, f.points, f.exact));
         Resolved {
             status,
-            text: d.override_text.clone().or_else(|| measured.map(number)),
-            exact: found.as_ref().is_some_and(|f| f.exact),
-            points: found.map_or_else(Vec::new, |f| f.points),
+            text: d.override_text.clone().or_else(|| measured.and_then(number)),
+            members: members.into_iter().map(|m| Member { measured: m, text: length(m) }).collect(),
+            exact,
+            points,
             measured,
         }
     }
@@ -459,7 +494,7 @@ impl<'a> Lookup<'a> {
                 let (a, exact_a) = self.corner(a)?;
                 let (b, exact_b) = self.corner(b)?;
                 let measured = drawing_measure::linear(basis, a, b, *direction, *reading).map_err(unmeasurable)?;
-                Ok(Found { measured, points: vec![a, b], exact: exact_a && exact_b })
+                Ok(Found { measured, members: Vec::new(), points: vec![a, b], exact: exact_a && exact_b })
             }
             DimensionKind::Length { edge, direction, reading } => {
                 let found = self.edges(edge)?;
@@ -470,14 +505,15 @@ impl<'a> Lookup<'a> {
                 let ends = found.pieces.first().and_then(|(_, line)| straight(line));
                 let [a, b] = ends.ok_or_else(|| Status::Unmeasurable(format!("edge `{}` isn't straight", edge.name)))?;
                 let measured = drawing_measure::linear(basis, a, b, *direction, *reading).map_err(unmeasurable)?;
-                Ok(Found { measured, points: vec![a, b], exact: found.exact })
+                Ok(Found { measured, members: Vec::new(), points: vec![a, b], exact: found.exact })
             }
             DimensionKind::Angle { a, b, reading, other_side } => {
                 let (a, exact_a) = self.line(a)?;
                 let (b, exact_b) = self.line(b)?;
                 let between = drawing_measure::angle(basis, (a[0], a[1]), AngleFrom::Edge(b[0], b[1]), *reading).map_err(unmeasurable)?;
                 let value = between_lines(between.value, *other_side);
-                Ok(Found { measured: Measured { value, ..between }, points: vec![a[0], a[1], b[0], b[1]], exact: exact_a && exact_b })
+                let points = vec![a[0], a[1], b[0], b[1]];
+                Ok(Found { measured: Measured { value, ..between }, members: Vec::new(), points, exact: exact_a && exact_b })
             }
             DimensionKind::Radial { edge, diameter } => {
                 let found = self.edges(edge)?;
@@ -487,7 +523,15 @@ impl<'a> Lookup<'a> {
                 }
                 let (radius, points) = self.arc(edge, &found, basis)?;
                 let value = if *diameter { 2.0 * radius } else { radius };
-                Ok(Found { measured: Measured { value, foreshortened: false }, points: points.to_vec(), exact: found.exact })
+                let measured = Measured { value, foreshortened: false };
+                Ok(Found { measured, members: Vec::new(), points: points.to_vec(), exact: found.exact })
+            }
+            DimensionKind::Chain { points, direction } => {
+                let found = points.iter().map(|p| self.corner(p)).collect::<std::result::Result<Vec<_>, _>>()?;
+                let exact = found.iter().all(|(_, exact)| *exact);
+                let points: Vec<Vec3> = found.into_iter().map(|(p, _)| p).collect();
+                let chain = drawing_measure::chain(basis, &points, *direction).map_err(unmeasurable)?;
+                Ok(Found { measured: chain.overall, members: chain.members, points, exact })
             }
         }
     }
@@ -561,8 +605,8 @@ impl<'a> Lookup<'a> {
         }
     }
 
-    /// The point `point` names, in the design's frame: a corner, the one end all its named edges (or
-    /// their pieces) share, or a centre.
+    /// The point `point` names, in the design's frame: a corner, the one end all its named edges
+    /// (or their pieces) share, or a centre.
     fn corner(&mut self, point: &ModelPoint) -> std::result::Result<(Vec3, bool), Status> {
         if point.centre {
             return self.centre(point);

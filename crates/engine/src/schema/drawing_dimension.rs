@@ -203,6 +203,15 @@ pub enum KindParam {
         #[schemars(with = "bool")]
         diameter: Option<bool>,
     },
+    /// The distances from each point to the next, in order along one line as the view shows them.
+    Chain {
+        /// 3 to 64 corners.
+        points: Vec<CornerParam>,
+        /// As a linear dimension's; `aligned` (the default) is from the first point to the last.
+        #[serde(default, deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
+        #[schemars(with = "Value")]
+        direction: Option<LinearDirection>,
+    },
 }
 
 /// What `drawing.dimension.add` takes.
@@ -267,7 +276,7 @@ pub struct DimensionSet {
     /// Text shown instead of the number, or `null` to show the number again.
     #[serde(deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
     pub override_text: Option<Option<String>>,
-    /// A linear or length dimension's.
+    /// A linear, length or chain dimension's.
     #[serde(deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Value")]
     pub direction: Option<LinearDirection>,
@@ -304,6 +313,14 @@ pub enum CandidateResult {
     Corner([f64; 3]),
 }
 
+/// One of a chain's members as the model has it now.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MemberResult {
+    /// Model millimetres.
+    pub value: f64,
+    pub text: String,
+}
+
 /// A dimension as the model has it now.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct DimensionResult {
@@ -316,15 +333,19 @@ pub struct DimensionResult {
     /// Why it is lost or unmeasurable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
-    /// What it reads: model millimetres, or degrees for an angle.
+    /// What it reads: model millimetres, or degrees for an angle; a chain's overall.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<f64>,
     /// Whether a measured line leaves the view's plane, so the view shows it shorter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub foreshortened: Option<bool>,
-    /// What it shows: the text given, else the number in the drawing's units.
+    /// What it shows: the text given, else the number in the drawing's units; none for a chain,
+    /// which shows its members'.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// A chain's members, from its first point to its last.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<MemberResult>,
     /// When it has no value now: the last one it read this session, as `value` gives it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_good: Option<f64>,

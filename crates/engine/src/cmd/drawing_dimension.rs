@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use solidcraft_doc::drawing::Drawing;
-use solidcraft_doc::drawing::dimension::{Candidate, Dimension, DimensionKind, Status, TextPlace};
+use solidcraft_doc::drawing::dimension::{Candidate, Dimension, DimensionKind, Status, TextPlace, check_chain_length};
 use solidcraft_doc::ids;
 use solidcraft_geom::Vec3;
 use solidcraft_geom::drawing_measure::{LinearDirection, Reading};
@@ -17,7 +17,7 @@ use solidcraft_geom::drawing_measure::{LinearDirection, Reading};
 use super::CommandSpec;
 use crate::params::bad;
 use crate::schema::drawing_dimension::{
-    AddParams, CandidateResult, CornerParam, DimensionResult, DimensionSet, EdgeParam, EditParams, EditResult, InspectParams, KindParam,
+    AddParams, CandidateResult, CornerParam, DimensionResult, DimensionSet, EdgeParam, EditParams, EditResult, InspectParams, KindParam, MemberResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -45,12 +45,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params(
             "view: a saved view's id; kind: {linear: {a, b: corners, direction?: aligned (default), horizontal, vertical or {along: [x, y]}, \
              reading?: projected (default) or true}}, {length: {edge, direction?, reading?}}, {angle: {a, b: straight edges, reading?, \
-             other_side?}} or {radial: {edge: a circle or an arc the view sees face on, diameter?: by default for a whole circle or \
-             half a turn or more}}; an edge is a point on it [x, y, z] in the design's frame, {point} or {body, index}, and a corner a point, \
-             {point}, {edges: [2 to 16 edges]} or {centre: an edge that is a circle or an arc}, each with path?: the occurrences its body is placed through, from the top; offset_mm?: \
-             the dimension line's distance on paper (default 10); text?: centred (default) or {at: [x, y]} from the view's centre; \
-             decimals?: 0..6 (default 2); override_text? → what drawing.dimension.inspect answers for it. Saved by the edges' names, \
-             never the points picked; one the view can't measure is refused. One undo step; no model is evaluated.",
+             other_side?}}, {radial: {edge: a circle or an arc the view sees face on, diameter?: by default for a whole circle or \
+             half a turn or more}} or {chain: {points: [3 to 64 corners, in order along one line], direction?: as a linear one's, \
+             aligned being first to last}}; an edge is a point on it [x, y, z] in the design's frame, {point} or {body, index}, and a \
+             corner a point, {point}, {edges: [2 to 16 edges]} or {centre: an edge that is a circle or an arc}, each with path?: the \
+             occurrences its body is placed through, from the top; offset_mm?: the dimension line's distance on paper (default 10); \
+             text?: centred (default) or {at: [x, y]} from the view's centre; decimals?: 0..6 (default 2); override_text? (not a \
+             chain's) → what drawing.dimension.inspect answers for it. Saved by the edges' names, never the points picked; one the \
+             view can't measure is refused. One undo step; no model is evaluated.",
         ),
     CommandSpec::new(EDIT, "Edit Drawing Dimension", crate::checked!("drawing.dimension.edit", EDIT_CONTRACT, edit))
         .icon("dimension")
@@ -61,7 +63,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params(
             "dimension: its id; set: {offset_mm?, text?: centred or {at: [x, y]}, decimals?: 0..6, override_text?: text, or null to show \
              the number again; direction?, reading?: a linear or length dimension's, reading? and other_side?: an angle's, diameter?: a \
-             radial dimension's} → \
+             radial dimension's, direction?: a chain's} → \
              {dimension, changed: [fields]}. What it measures stays: to measure something else, add a new one. One undo step, none \
              when nothing changes; no model is evaluated.",
         ),
@@ -74,9 +76,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<DimensionResult>)
         .params(
             "dimension: its id → {dimension, view, record: as saved, status: ok, overridden, ambiguous, suppressed, lost or unmeasurable, \
-             why?, value? (model mm, or degrees for an angle), foreshortened?, text?, last_good? (the value it last read this session, \
-             when it has none now), exact, candidates?: [{edge: {body, index}} or {corner: [x, y, z]}]}. Read-only; no model is \
-             evaluated.",
+             why?, value? (model mm, or degrees for an angle; a chain's overall), foreshortened?, text? (none for a chain), \
+             members?: a chain's [{value, text}] from its first point, last_good? (the value it last read this session, when it has \
+             none now), exact, candidates?: [{edge: {body, index}} or {corner: [x, y, z]}]}. Read-only; no model is evaluated.",
         ),
 ];
 
@@ -105,6 +107,12 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
             DimensionKind::Angle { a: edge(&a)?, b: edge(&b)?, reading: reading.unwrap_or(Reading::Projected), other_side }
         }
         KindParam::Radial { edge: e, diameter } => DimensionKind::Radial { edge: edge(&e)?, diameter: diameter.unwrap_or(false) },
+        KindParam::Chain { points, direction } => {
+            // Counted before any point is looked up.
+            check_chain_length(points.len()).map_err(|why| bad(ADD, why.to_string()))?;
+            let points = points.iter().map(corner).collect::<Result<_>>()?;
+            DimensionKind::Chain { points, direction: direction.unwrap_or(LinearDirection::Aligned) }
+        }
     };
     let id = record.allocate_id(&mut s.ids).map_err(|e| bad(ADD, e.to_string()))?;
     let mut dimension = Dimension {
@@ -192,6 +200,12 @@ fn change(d: &mut Drawing, id: u64, set: &DimensionSet) -> Result<Vec<String>> {
             }
             *diameter = set.diameter.unwrap_or(*diameter);
         }
+        DimensionKind::Chain { direction, .. } => {
+            if set.reading.is_some() || set.other_side.is_some() {
+                return Err(bad(EDIT, "a chain has only `direction`: it reads as the view shows it"));
+            }
+            *direction = set.direction.unwrap_or(*direction);
+        }
     }
     Ok(changed_fields(&before, dimension))
 }
@@ -204,6 +218,7 @@ fn kind_settings(kind: &DimensionKind) -> (Option<LinearDirection>, Option<Readi
         }
         DimensionKind::Angle { reading, other_side, .. } => (None, Some(*reading), *other_side, false),
         DimensionKind::Radial { diameter, .. } => (None, None, false, *diameter),
+        DimensionKind::Chain { direction, .. } => (Some(*direction), None, false, false),
     }
 }
 
@@ -254,6 +269,7 @@ fn answer(s: &mut Session, cmd: &str, id: u64) -> Result<Value> {
         value: r.measured.map(|m| shown(m.value)),
         foreshortened: r.measured.map(|m| m.foreshortened),
         text: r.text,
+        members: r.members.into_iter().map(|m| MemberResult { value: m.measured.value, text: m.text }).collect(),
         last_good: last_good.map(shown),
         exact: r.exact,
         candidates,
