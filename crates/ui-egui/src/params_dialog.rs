@@ -1262,7 +1262,7 @@ mod tests {
         assert_eq!(order("user", &users), users, "the listed order by default");
         assert!(model.len() > 1, "the box drives several parameters: {model:?}");
         let mut sorted_model = model.clone();
-        sorted_model.sort_by(|a, b| ui_kit::natural_cmp(a, b));
+        ui_kit::Sort::Ascending.apply(&mut sorted_model, |s| s.as_str());
 
         h.step(&json!({"click": {"handle": "params:sort:user"}})).unwrap();
         h.frames(3);

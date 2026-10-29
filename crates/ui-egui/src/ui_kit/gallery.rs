@@ -981,6 +981,12 @@ const ELEMENTS: &[Element] = &[
             removable_header(ui, "Width");
         });
     }),
+    element!("sort_header", |ui, _| {
+        ui.allocate_ui(vec2(140.0, row_height()), |ui| {
+            ui.set_min_size(vec2(140.0, row_height()));
+            sort_header(ui, "Name", &mut Sort::Ascending);
+        });
+    }),
     element!("plus_header", |ui, _| {
         ui.allocate_ui(vec2(140.0, row_height()), |ui| {
             ui.set_min_size(vec2(140.0, row_height()));

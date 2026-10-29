@@ -339,7 +339,7 @@ impl Sort {
 
 /// Natural order for names: runs of digits compare by value ("d2" before "d10"), letters
 /// ignore case ("Alpha" between "a" and "b"); exact ties fall back to the plain comparison.
-pub(crate) fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
     while let (Some(&p), Some(&q)) = (x.peek(), y.peek()) {
@@ -374,7 +374,7 @@ pub(crate) fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 pub(crate) fn sort_header(ui: &mut Ui, label: &str, sort: &mut Sort) -> Response {
     let t = Tokens::get();
     let rect = ui.max_rect();
-    let response = ui.interact(rect, ui.id().with(("sort", label)), egui::Sense::click());
+    let response = ui.allocate_rect(rect, egui::Sense::click());
     if response.hovered() {
         ui.painter().rect_filled(rect, t.control_radius, t.hover);
     }
