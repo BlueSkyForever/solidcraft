@@ -475,7 +475,7 @@ impl SolveApp {
         let s = &self.session;
         let same = Arc::ptr_eq(&s.doc, &doc);
         // The design it was computed for is still this one, edited since (an undo step away).
-        let edited = !same && s.undo.iter().chain(&s.redo).any(|snap| Arc::ptr_eq(&snap.doc, &doc));
+        let edited = !same && s.history.steps().iter().chain(s.history.redo_steps()).any(|snap| Arc::ptr_eq(&snap.doc, &doc));
         if !same && !edited {
             let _ = job.req.reply.send(json!({
                 "ok": false,

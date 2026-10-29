@@ -91,12 +91,12 @@ fn next_and_previous_tab_echo_their_step_without_editing_the_design() {
     let schema = schema.as_value();
     let mut s = Session { param_check: ParamCheck::Strict, ..Session::default() };
     s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap_or_else(|e| panic!("{e}"));
-    let (before, undo) = (s.doc.to_json(), s.undo.len());
+    let (before, undo) = (s.doc.to_json(), s.history.len());
     for (id, step) in [("view.next_tab", 1), ("view.previous_tab", -1)] {
         let r = s.execute(id, &json!({})).unwrap_or_else(|e| panic!("{id}: {e}"));
         assert_eq!(r, json!({"step": step}), "{id}");
         assert!(conforms(schema, schema, &r), "{r} doesn't match {schema}");
         assert!(s.execute(id, &json!({"step": 2})).is_err(), "{id} takes no parameters (strict check)");
     }
-    assert_eq!((s.doc.to_json(), s.undo.len()), (before, undo), "nothing in the design changes");
+    assert_eq!((s.doc.to_json(), s.history.len()), (before, undo), "nothing in the design changes");
 }

@@ -844,7 +844,7 @@ mod tests {
         };
         json!({
             "document":h.app.session.doc.to_json(), "revision":h.app.session.revision,
-            "undo":history(&h.app.session.undo), "redo":history(&h.app.session.redo),
+            "undo":history(h.app.session.history.steps()), "redo":history(h.app.session.history.redo_steps()),
             "dirty":h.app.session.is_dirty(), "selection":h.app.session.selection
         })
     }
@@ -890,7 +890,7 @@ mod tests {
         h.app.run("edit.undo", json!({})).unwrap();
         h.app.session.selection = vec![solidcraft_engine::Sel::Plane { name: "XY".into() }];
         h.step(&json!({"click":{"handle":"params:title"}})).unwrap();
-        assert!(!h.app.session.undo.is_empty() && !h.app.session.redo.is_empty());
+        assert!(!h.app.session.history.is_empty() && !h.app.session.history.redo_steps().is_empty());
         let before = escape_state(&h);
         escape_closed(&mut h, &before, "10 mm");
     }

@@ -2091,8 +2091,8 @@ pub fn canvas_items(app: &SolveApp, id: u64) -> Vec<Item> {
 pub struct CanvasPanel {
     pub canvas: u64,
     pub calibrate: bool,
-    /// Undo depth when the panel opened.
-    pub(crate) depth: usize,
+    /// The undo history's mark when the panel opened: its edits fold into one step.
+    pub(crate) mark: solidcraft_engine::Mark,
     pub a: [f64; 2],
     pub b: [f64; 2],
     pub distance: f64,
@@ -2109,7 +2109,7 @@ impl CanvasPanel {
             .find(|c| c.id == canvas)
             .map(|c| ([c.center.x - c.width / 2.0, c.center.y], [c.center.x + c.width / 2.0, c.center.y], c.width))
             .unwrap_or(([0.0, 0.0], [100.0, 0.0], 100.0));
-        CanvasPanel { canvas, calibrate, depth: app.session.undo.len(), a, b, distance: d }
+        CanvasPanel { canvas, calibrate, mark: app.session.history.mark(), a, b, distance: d }
     }
 }
 

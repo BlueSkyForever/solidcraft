@@ -1015,7 +1015,7 @@ fn main() -> eframe::Result {
                 }
                 app.session.doc_mut().name = "Sample Plate".into();
                 app.session.mark_saved();
-                app.session.undo.clear();
+                app.session.history.clear();
             }
             // Lock files next to open designs: a design open on another computer says so (#5467),
             // the files given at launch included.

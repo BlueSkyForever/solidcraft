@@ -865,7 +865,7 @@ fn view_angles_readout_shows_only_when_on_and_applies_typed_angles() {
         assert!(!h.app.preferences.show_view_angles);
         assert!(crate::scenario::rect_of("view_angles:readout").is_none());
         assert_eq!(h.app.session.doc.to_json(), design);
-        assert!(h.app.session.undo.is_empty());
+        assert!(h.app.session.history.is_empty());
     }
 }
 

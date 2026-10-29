@@ -257,12 +257,12 @@ fn transfer_checkpoint_restores_pending_world_pose_and_history() {
     run(&mut s, "occurrence.move", json!({"occurrence":occurrence,"translate":[10,0,0],"capture":false}));
     let pending = s.pending_moves.clone();
     let before = s.world_state().body("Block").unwrap().mesh().bounds();
-    let undo_count = s.undo.len();
+    let undo_count = s.history.len();
     let checkpoint = s.checkpoint();
     run(&mut s, "component.move_bodies", json!({"component":0,"bodies":["Block"]}));
     s.restore_checkpoint(checkpoint).unwrap();
     assert_eq!(s.pending_moves, pending);
-    assert_eq!(s.undo.len(), undo_count);
+    assert_eq!(s.history.len(), undo_count);
     assert_eq!(s.world_state().body("Block").unwrap().component, source);
     assert!(s.world_state().body("Block").unwrap().mesh().bounds().min.dist(before.min) < 1e-6);
 }
