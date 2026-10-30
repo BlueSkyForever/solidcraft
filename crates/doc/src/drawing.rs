@@ -42,6 +42,7 @@
 //! dimensions and balloons by id, then [`Drawing::validate`]; [`Drawing::from_value`] the same from the
 //! format check on.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -393,6 +394,11 @@ impl Drawing {
             None => Ok(()),
         }
     }
+
+    /// How a message names this drawing: by its name and id.
+    pub fn label(&self) -> String {
+        format!("drawing {:?} ({})", self.name, ids::encode(self.id))
+    }
 }
 
 /// A design's drawings as read, each checked on its own already: in their order (by name, then id)
@@ -414,7 +420,12 @@ pub fn sort(drawings: &mut [Arc<Drawing>]) {
 pub fn check_in_design(drawings: &[Arc<Drawing>]) -> Result<()> {
     check_count(drawings.len())?;
     let mut seen = BTreeSet::new();
-    drawings.iter().try_for_each(|d| require(seen.insert(d.id), || format!("two drawings have the id {}", ids::encode(d.id))))
+    drawings.iter().try_for_each(|d| take_id(&mut seen, d.id))
+}
+
+/// A drawing takes `id`, which no drawing before it in its design (`seen`) has.
+fn take_id(seen: &mut BTreeSet<u64>, id: u64) -> Result<()> {
+    require(seen.insert(id), || format!("two drawings have the id {}", ids::encode(id)))
 }
 
 /// A design of `count` drawings keeps the cap: what a reader checks before it reads any of them.
@@ -441,6 +452,31 @@ fn in_id_order<T>(records: &[Arc<T>], id: impl Fn(&T) -> u64) -> bool {
 
 fn no_revisions(revisions: &Arc<RevisionRecord>) -> bool {
     **revisions == RevisionRecord::default()
+}
+
+/// `doc` without the drawings that break a rule, and a line naming each one left out and the
+/// rule. Reading refuses a design whole for one such drawing, so a copy that must open again (an
+/// autosave, a crash report's design) keeps the rest: the first [`MAX_DRAWINGS`], the first of
+/// two with one id, and only those keeping their own rules and small enough to save.
+pub fn openable(doc: &crate::Document) -> (Cow<'_, crate::Document>, Vec<String>) {
+    let (mut seen, mut left_out) = (BTreeSet::new(), Vec::new());
+    let kept: Vec<_> = doc
+        .drawings
+        .iter()
+        .filter(|d| {
+            // Its own rules and its size before its id: a drawing left out takes no id from a later one.
+            let checked =
+                check_count(seen.len() + 1).and_then(|()| d.validate()).and_then(|()| d.to_json().map(drop)).and_then(|()| take_id(&mut seen, d.id));
+            checked.map_err(|e| left_out.push(format!("{} left out: {e}", d.label()))).is_ok()
+        })
+        .cloned()
+        .collect();
+    if left_out.is_empty() {
+        return (Cow::Borrowed(doc), left_out);
+    }
+    let mut doc = doc.clone();
+    doc.drawings = kept;
+    (Cow::Owned(doc), left_out)
 }
 
 /// `Ok` when `ok`, else the rule `broken` names.
