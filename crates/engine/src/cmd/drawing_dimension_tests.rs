@@ -203,6 +203,161 @@ fn a_radial_dimension_reads_a_hole_and_an_edit_makes_it_a_diameter() {
     assert_eq!(s.drawing("test").unwrap().to_json().unwrap(), before);
 }
 
+/// A linear dimension measures from the centre of a hole or an arc, each named by its edge: the
+/// hole through the box about (40, 15) on the front, and the fillet's quarter arc about (75, 25).
+/// A straight edge has no centre, and a centre's edge has no path of its own.
+#[test]
+fn a_linear_dimension_measures_from_a_holes_centre() {
+    let (mut s, view) = front_view();
+    let drawing = s.drawing("test").unwrap().id;
+    run(&mut s, "drawing.close", json!({}));
+    run(&mut s, "solid.cylinder", json!({"radius": 6, "height": 42, "base": [40, -1, 15], "axis": "Y", "operation": "cut", "targets": ["Box"]}));
+    run(&mut s, "solid.fillet", json!({"edges": [[80, 20, 30]], "radius": 5, "body": "Box"}));
+    run(&mut s, "drawing.open", json!({"drawing": ids::encode(drawing)}));
+    let centre = |at: [f64; 3], radius: f64| json!({"centre": {"body": "Box", "index": round_index(&s, at, radius)}});
+    let (hole, arc) = (centre([40.0, 0.0, 15.0], 6.0), centre([75.0, 0.0, 25.0], 5.0));
+    let along = add(&mut s, view, json!({"linear": {"a": [0, 0, 0], "b": hole, "direction": "horizontal"}}));
+    reads(&along, 40.0, "40.00");
+    let saved = &along["record"]["kind"]["linear"]["b"];
+    assert_eq!((saved["centre"].clone(), saved["edges"].as_array().map(Vec::len)), (json!(true), Some(1)), "{saved}");
+    reads(&add(&mut s, view, json!({"linear": {"a": [0, 0, 0], "b": hole, "direction": "vertical"}})), 15.0, "15.00");
+    reads(&add(&mut s, view, json!({"linear": {"a": hole, "b": arc, "direction": "horizontal"}})), 35.0, "35.00");
+    reads(&add(&mut s, view, json!({"linear": {"a": hole, "b": arc, "direction": "vertical"}})), 10.0, "10.00");
+    let before = s.drawing("test").unwrap().to_json().unwrap();
+    let v = ids::encode(view);
+    let linear = |a: Value| json!({"view": v, "kind": {"linear": {"a": a, "b": [80, 0, 0]}}});
+    let cases = [
+        (linear(json!({"centre": [40, 0, 30]})), "isn't a circle or an arc: a centre is a circle's or an arc's"),
+        (linear(json!({"centre": {"point": [40, 0, 30], "path": [1]}})), "{centre: a circle or an arc}"),
+        (linear(json!({"centre": [40, 0, 30], "edges": [[40, 0, 30], [0, 0, 15]]})), "{centre: a circle or an arc}"),
+        (linear(json!({"centre": [40, 20, 15]})), "no edge at [40, 20, 15]"),
+    ];
+    for (p, why) in cases {
+        let e = refused(&mut s, p.clone());
+        assert!(e.contains(why), "{p}: {e}");
+    }
+    assert_eq!(s.drawing("test").unwrap().to_json().unwrap(), before);
+}
+
+/// A chain from the box's bottom front corner through the centres of holes at 10, 30 and 60 along
+/// it reads 10, 20 and 30, adding up to its overall 60 within 1e-9, and shows its members' numbers,
+/// not one of its own. Its direction is its one setting. It keeps its rules: its points in order
+/// along its line, 3 to 64 of them (counted before any is looked up), and no text instead.
+#[test]
+fn a_chain_reads_holes_at_10_30_and_60_as_10_20_and_30() {
+    let (mut s, view) = front_view();
+    let drawing = s.drawing("test").unwrap().id;
+    run(&mut s, "drawing.close", json!({}));
+    for x in [10, 30, 60] {
+        run(&mut s, "solid.cylinder", json!({"radius": 3, "height": 42, "base": [x, -1, 15], "axis": "Y", "operation": "cut", "targets": ["Box"]}));
+    }
+    run(&mut s, "drawing.open", json!({"drawing": ids::encode(drawing)}));
+    let hole = |x: f64| json!({"centre": {"body": "Box", "index": round_index(&s, [x, 0.0, 15.0], 3.0)}});
+    let (h10, h30, h60) = (hole(10.0), hole(30.0), hole(60.0));
+    let steps = s.undo.len();
+    let chain = add(&mut s, view, json!({"chain": {"points": [[0, 0, 0], h10, h30, h60], "direction": "horizontal"}}));
+    assert_eq!(s.undo.len(), steps + 1, "one undo step");
+    assert_eq!((chain["status"].as_str(), chain.get("text")), (Some("ok"), None), "{chain}");
+    let members = |reply: &Value| {
+        let listed = reply["members"].as_array().cloned().unwrap_or_default();
+        listed.iter().map(|m| (m["value"].as_f64().unwrap_or(f64::NAN), m["text"].as_str().unwrap_or("").to_string())).collect::<Vec<_>>()
+    };
+    let read = members(&chain);
+    assert_eq!(read.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>(), ["10.00", "20.00", "30.00"]);
+    assert!(read.iter().zip([10.0, 20.0, 30.0]).all(|((value, _), part)| (value - part).abs() < 1e-9), "{read:?}");
+    let overall = chain["value"].as_f64().unwrap();
+    assert!((overall - 60.0).abs() < 1e-9 && (read.iter().map(|(value, _)| value).sum::<f64>() - overall).abs() < 1e-9, "{chain}");
+    assert_eq!(chain["record"]["kind"]["chain"]["points"].as_array().map(Vec::len), Some(4));
+    // A direction given against the chain's way reads the same.
+    let id = chain["dimension"].clone();
+    assert_eq!(edit(&mut s, &id, json!({"direction": {"along": [-1, 0]}}))["changed"], json!(["direction"]));
+    assert_eq!(members(&run(&mut s, INSPECT, json!({"dimension": id}))), read);
+    let before = s.drawing("test").unwrap().to_json().unwrap();
+    for (set, why) in [
+        (json!({"reading": "true"}), "a chain has only `direction`"),
+        (json!({"other_side": true}), "a chain has only `direction`"),
+        (json!({"diameter": true}), "`diameter` is a radial dimension's"),
+        (json!({"override_text": "60"}), "a chain shows its members' numbers, never a text instead"),
+    ] {
+        let p = json!({"dimension": id, "set": set});
+        let e = s.execute(EDIT, &p).err().map(|e| e.to_string()).unwrap_or_else(|| panic!("accepted: {p}"));
+        assert!(e.contains(why), "{p}: {e}");
+    }
+    let v = ids::encode(view);
+    let chained = |points: Value| json!({"view": v, "kind": {"chain": {"points": points, "direction": "horizontal"}}});
+    let nowhere = json!([1e6, 1e6, 1e6]);
+    let cases = [
+        (chained(json!([h10, h60, h30])), "a chain's points run one way along its line"),
+        (chained(json!([h10, h60])), "a chain has 3 to 64 points"),
+        (chained(Value::Array(vec![nowhere.clone(); 65])), "a chain has 3 to 64 points"),
+        (chained(json!([h10, nowhere, h60])), "no corner at"),
+        (json!({"view": v, "kind": {"chain": {"points": [h10, h30, h60], "reading": "true"}}}), "unknown field `reading`"),
+        (json!({"view": v, "kind": {"chain": {"points": [h10, h30, h60]}}, "override_text": "60"}), "never a text instead"),
+    ];
+    for (p, why) in cases {
+        let e = refused(&mut s, p.clone());
+        assert!(e.contains(why), "{p}: {e}");
+    }
+    assert_eq!(s.drawing("test").unwrap().to_json().unwrap(), before);
+}
+
+/// A cylinder's diameter is read between its silhouettes: a boss of radius 5 along X on the box's
+/// right face, seen side on from the front, reads Ø10.00, picked by a point on it or by its body
+/// and index, and saved by its face's name; it takes no settings. A flat face, a fillet's quarter
+/// round (one of its silhouettes isn't on it) and a hole the view sees end-on are refused, with
+/// the drawing unchanged.
+#[test]
+fn a_cylinders_diameter_is_read_between_its_silhouettes() {
+    let (mut s, view) = front_view();
+    let drawing = s.drawing("test").unwrap().id;
+    run(&mut s, "drawing.close", json!({}));
+    run(&mut s, "solid.cylinder", json!({"radius": 5, "height": 20, "base": [80, 20, 15], "axis": "X", "operation": "join", "targets": ["Box"]}));
+    run(&mut s, "solid.fillet", json!({"edges": [[40, 0, 30]], "radius": 4, "body": "Box"}));
+    run(&mut s, "solid.cylinder", json!({"radius": 3, "height": 42, "base": [20, -1, 15], "axis": "Y", "operation": "cut", "targets": ["Box"]}));
+    run(&mut s, "drawing.open", json!({"drawing": ids::encode(drawing)}));
+    // 30° round from the boss's top, away from where its two half faces meet.
+    let on_boss = [90.0, 22.5, 15.0 + 5.0 * 30f64.to_radians().cos()];
+    let boss = add(&mut s, view, json!({"cylinder": {"face": on_boss}}));
+    reads(&boss, 10.0, "Ø10.00");
+    assert_eq!((boss["exact"].clone(), boss["foreshortened"].clone()), (json!(true), json!(false)), "{boss}");
+    let saved = boss["record"]["kind"]["cylinder"]["face"].clone();
+    assert!(saved["body"] == "Box" && saved["name"].as_str().is_some_and(|n| !n.is_empty()), "{saved}");
+    let index = {
+        let state = s.model.state();
+        solidcraft_doc::appearance::face_index_at(state.body("Box").unwrap(), Vec3::from(on_boss)).unwrap()
+    };
+    let by_index = add(&mut s, view, json!({"cylinder": {"face": {"body": "Box", "index": index}}}));
+    assert_eq!(by_index["record"]["kind"], boss["record"]["kind"]);
+    let id = boss["dimension"].clone();
+    let before = s.drawing("test").unwrap().to_json().unwrap();
+    for (set, why) in [
+        (json!({"direction": "horizontal"}), "a cylinder's diameter has no direction, reading or side"),
+        (json!({"reading": "true"}), "a cylinder's diameter has no direction, reading or side"),
+        (json!({"diameter": false}), "`diameter` is a radial dimension's"),
+    ] {
+        let p = json!({"dimension": id, "set": set});
+        let e = s.execute(EDIT, &p).err().map(|e| e.to_string()).unwrap_or_else(|| panic!("accepted: {p}"));
+        assert!(e.contains(why), "{p}: {e}");
+    }
+    let v = ids::encode(view);
+    let cylinder = |face: Value| json!({"view": v, "kind": {"cylinder": {"face": face}}});
+    let on_fillet = [40.0, 4.0 - 4.0 * 45f64.to_radians().cos(), 26.0 + 4.0 * 45f64.to_radians().sin()];
+    let cases = [
+        (cylinder(json!([40, 0, 10])), "isn't a cylinder"),
+        (cylinder(json!(on_fillet)), "isn't a whole cylinder in this view"),
+        (cylinder(json!([23, 20, 15])), "the cylinder is seen end-on in this view"),
+        (cylinder(json!([200, 200, 200])), "no face at [200, 200, 200]"),
+        (cylinder(json!({"body": "Box", "index": 9999})), "body `Box` has no face 9999"),
+        (cylinder(json!({"body": "Box"})), "a face is a point on it"),
+        (cylinder(json!({"body": 7, "index": 0})), "a face's `body` is its name"),
+    ];
+    for (p, why) in cases {
+        let e = refused(&mut s, p.clone());
+        assert!(e.contains(why), "{p}: {e}");
+    }
+    assert_eq!(s.drawing("test").unwrap().to_json().unwrap(), before);
+}
+
 /// A dimension whose edge is filleted away has no value, and gives the one it last read this
 /// session as its last good value.
 #[test]
@@ -300,11 +455,14 @@ fn places(v: &Value, at: String, out: &mut Vec<String>) {
 }
 
 /// A hostile value in each place of each command's parameters, at every depth (picks, paths,
-/// corners' edges, the edit's settings): never a panic, and the drawing keeps its rules.
+/// corners' edges, a chain's points, the edit's settings): never a panic, and the drawing keeps its
+/// rules.
 #[test]
 fn hostile_dimension_params_never_panic() {
     let (mut s, view) = front_view();
     let id = add(&mut s, view, json!({"length": {"edge": [40, 0, 30]}}))["dimension"].clone();
+    // Aligned from the first corner to the last, each corner past the one before.
+    let chain = add(&mut s, view, json!({"chain": {"points": [[0, 0, 0], [80, 0, 0], [80, 0, 30]]}}))["dimension"].clone();
     let v = json!(ids::encode(view));
     let corner = json!({"edges": [{"body": "Box", "index": 0}, {"point": [0, 0, 15]}], "path": [1]});
     let calls = [
@@ -315,6 +473,13 @@ fn hostile_dimension_params_never_panic() {
         ),
         (ADD, json!({"view": v, "kind": {"angle": {"a": {"point": [40, 0, 30], "path": [1]}, "b": [0, 0, 15], "other_side": true}}})),
         (ADD, json!({"view": v, "kind": {"radial": {"edge": {"body": "Box", "index": 0, "path": [1]}, "diameter": true}}})),
+        (
+            ADD,
+            json!({"view": v, "kind": {"chain": {"points": [[0, 0, 0], {"centre": {"body": "Box", "index": 0}, "path": [1]}, corner, [80, 0, 0]],
+            "direction": "horizontal"}}}),
+        ),
+        (EDIT, json!({"dimension": chain, "set": {"direction": {"along": [1, 1]}, "decimals": 3}})),
+        (ADD, json!({"view": v, "kind": {"cylinder": {"face": {"body": "Box", "index": 0, "path": [1]}}}})),
         (
             EDIT,
             json!({"dimension": id, "set": {"offset_mm": 5, "text": "centred", "decimals": 1, "override_text": null, "direction": "vertical",

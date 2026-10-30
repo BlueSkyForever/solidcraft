@@ -147,6 +147,67 @@ fn what_cant_be_measured_is_refused() {
         refused(angle(&front(), edge, ModelAxis(axis), Projected), "model axis");
     }
     refused(angle(&front(), edge, Edge(a, a), Projected), "no length");
+    // A chain is 3 points or more, each past the one before along its line.
+    let (p, q) = (Vec3::new(10.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 5.0));
+    refused(chain(&front(), &[], Horizontal), "no points");
+    refused(chain(&front(), &[a, p], Horizontal), "at least 3 points");
+    refused(chain(&front(), &[a, q, p], Horizontal), "one way");
+    refused(chain(&front(), &[a, Vec3::new(0.0, 0.0, 9.0), q], Horizontal), "one way");
+    refused(chain(&front(), &[a, p, p, q], Horizontal), "no length");
+    refused(chain(&front(), &[a, p, Vec3::new(0.0, 30.0, 0.0)], Aligned), "one point in this view");
+    refused(chain(&front(), &[a, p, q], Along(Vec2::ZERO)), "direction to measure along");
+    refused(chain(&front(), &[a, Vec3::new(f64::NAN, 0.0, 0.0), q], Horizontal), "model point");
+    refused(chain(&skewed, &[a, p, q], Horizontal), "basis");
+}
+
+/// A corner at 0 and hole centres at 10, 30 and 60 along the front view's horizontal read 10, 20
+/// and 30, adding up to the overall 60; given the other way round, the members come last to first,
+/// and a direction given against the chain's way reads the same. Aligned up a slope, each member is
+/// its own part of the line, and a point behind the view's plane makes its members, and so the
+/// chain, foreshortened.
+#[test]
+fn a_chain_reads_each_point_to_the_next_along_one_line() {
+    let values = |c: Chain| c.members.iter().map(|m| m.value).collect::<Vec<_>>();
+    let holes = [Vec3::ZERO, Vec3::new(10.0, 0.0, 15.0), Vec3::new(30.0, 0.0, 15.0), Vec3::new(60.0, 0.0, 15.0)];
+    let across = chain(&front(), &holes, Horizontal).unwrap();
+    assert_eq!(across.overall, Measured { value: 60.0, foreshortened: false });
+    assert!((across.members.iter().map(|m| m.value).sum::<f64>() - 60.0).abs() <= 1e-9);
+    assert_eq!(values(across), [10.0, 20.0, 30.0]);
+    let mut back = holes;
+    back.reverse();
+    assert_eq!(values(chain(&front(), &back, Horizontal).unwrap()), [30.0, 20.0, 10.0]);
+    assert_eq!(values(chain(&front(), &holes, Along(Vec2::new(-3.0, 0.0))).unwrap()), [10.0, 20.0, 30.0]);
+    // Up a 3-4-5 slope, then with its third point 7 behind the view's plane.
+    let slope = [Vec3::ZERO, Vec3::new(3.0, 0.0, 4.0), Vec3::new(9.0, 0.0, 12.0), Vec3::new(12.0, 0.0, 16.0)];
+    let parts = |c: Chain| values(c).iter().zip([5.0, 10.0, 5.0]).all(|(v, part)| close(*v, part));
+    assert!(parts(chain(&front(), &slope, Aligned).unwrap()));
+    let mut behind = slope;
+    behind[2].y = 7.0;
+    let tilted = chain(&front(), &behind, Aligned).unwrap();
+    assert_eq!(tilted.members.iter().map(|m| m.foreshortened).collect::<Vec<_>>(), [false, true, true]);
+    assert!(tilted.overall.foreshortened && close(tilted.overall.value, 20.0), "{tilted:?}");
+    assert!(parts(tilted), "as the view shows them");
+}
+
+/// A cylinder along X seen from the front has its silhouettes above and below its axis, and so does
+/// one leaning back toward Y; in the isometric view every way is square to the axis and the view's
+/// normal. Seen along its axis, a cylinder has no silhouettes.
+#[test]
+fn a_cylinders_silhouettes_are_square_to_its_axis_and_the_view() {
+    let up = silhouette_side(&front(), Vec3::X * 5.0).unwrap();
+    assert!(up.dist(Vec3::Z) < 1e-12 || up.dist(-Vec3::Z) < 1e-12, "{up:?}");
+    let leaning = silhouette_side(&front(), Vec3::new(1.0, 1.0, 0.0)).unwrap();
+    assert!(leaning.cross(Vec3::Z).len() < 1e-12, "{leaning:?}");
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z, Vec3::new(1.0, -2.0, 0.5)] {
+        let side = silhouette_side(&iso(), axis).unwrap();
+        assert!(close(side.len(), 1.0) && side.dot(axis).abs() < 1e-12 && side.dot(iso().normal()).abs() < 1e-12, "{axis:?}");
+    }
+    refused(silhouette_side(&front(), Vec3::Y), "end-on");
+    refused(silhouette_side(&front(), Vec3::new(0.0, -3.0, 0.0)), "end-on");
+    refused(silhouette_side(&front(), Vec3::new(1e-12, 1.0, 0.0)), "end-on");
+    refused(silhouette_side(&front(), Vec3::ZERO), "axis");
+    refused(silhouette_side(&front(), Vec3::new(f64::NAN, 0.0, 1.0)), "axis");
+    refused(silhouette_side(&Plane { x: Vec3::new(2.0, 0.0, 0.0), ..front() }, Vec3::X), "basis");
 }
 
 fn random(state: &mut u64) -> u64 {
@@ -160,12 +221,13 @@ fn random(state: &mut u64) -> u64 {
 /// looking any way, points within a metre) and the rest hostile (non-finite, huge, repeated,
 /// along the view's normal), 20,000 seeded cases: nothing panics; across² + up² = aligned²; a
 /// projected aligned length is never more than the true one; every angle is from 0 to π, and a
-/// true angle and its projection agree in a view square to both lines.
+/// true angle and its projection agree in a view square to both lines; a chain's members are each
+/// more than 0 and add up to its overall.
 #[test]
 fn measurements_seeded_never_panic_and_keep_their_rules() {
     let mut seed = 0x4896_19a0_d1e5_7c3b;
     let hostile = [0.0, -0.0, 1e-10, 1e12, 1.1e12, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1e300, -5.0];
-    let (mut lengths, mut angles) = (0, 0);
+    let (mut lengths, mut angles, mut chains) = (0, 0, 0);
     for case in 0..20_000 {
         let tidy = !random(&mut seed).is_multiple_of(4);
         let number = |seed: &mut u64| {
@@ -191,6 +253,14 @@ fn measurements_seeded_never_panic_and_keep_their_rules() {
             assert!(true_length.is_ok_and(|t| aligned <= t * (1.0 + 1e-12)), "case {case}");
         }
         let _ = linear(&basis, a, b, Along(along), Projected);
+        for direction in [Horizontal, Vertical, Aligned, Along(along)] {
+            if let Ok(chained) = chain(&basis, &[a, b, c, d], direction) {
+                chains += 1;
+                let sum: f64 = chained.members.iter().map(|m| m.value).sum();
+                assert!(chained.members.iter().all(|m| m.value > EPS), "case {case}: {chained:?}");
+                assert!((sum - chained.overall.value).abs() <= 1e-9 * chained.overall.value.max(1.0), "case {case}: {chained:?}");
+            }
+        }
         for from in [AngleFrom::Horizontal, AngleFrom::Vertical, ModelAxis(c - d), Edge(c, d)] {
             for reading in [Projected, True] {
                 if let Ok(m) = angle(&basis, (a, b), from, reading) {
@@ -205,5 +275,5 @@ fn measurements_seeded_never_panic_and_keep_their_rules() {
             assert!((drawn.value - model.value).abs() <= 1e-6, "case {case}: {drawn:?} {model:?}");
         }
     }
-    assert!(lengths > 5_000 && angles > 20_000, "lengths {lengths}, angles {angles}");
+    assert!(lengths > 5_000 && angles > 20_000 && chains > 2_000, "lengths {lengths}, angles {angles}, chains {chains}");
 }
