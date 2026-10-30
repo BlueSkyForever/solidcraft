@@ -1009,6 +1009,10 @@ preference_settings! {
     /// Up/Down and the wheel over a focused value field step its plain number (`value_step`,
     /// #2320). Off by default: the keys move the text cursor and the wheel scrolls, as before.
     step_values: bool = false, PAGE_DESIGN => check_id("ui.step_values");
+    /// The Parameters dialog applies an expression as soon as its field is left (#9279). Off: the
+    /// edits wait in the dialog until Apply or OK sets them together, in one rebuild and one undo
+    /// step. Its checkbox is in the dialog itself.
+    parameters_apply_live: bool = true;
     /// A design coming back to its tab reads again the linked designs whose files changed since
     /// it last read them. Off: they wait for Update Links, as before.
     update_changed_links: bool = true, PAGE_DESIGN => check_id("settings.update_changed_links");
