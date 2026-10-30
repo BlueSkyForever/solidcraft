@@ -541,6 +541,9 @@ pub struct ModelState {
     pub reserved_body_names: std::collections::BTreeSet<String>,
     /// Sheet metal bodies (by body name) and their flat patterns.
     pub sheets: Vec<crate::sheet::SheetBody>,
+    /// Bodies converted to sheet metal (#6748): their flat patterns. Such a
+    /// body is the folded sheet.
+    pub surface_flats: Vec<crate::SurfaceFlat>,
     /// Construction planes, axes and points as evaluated (by feature).
     pub construct: Vec<crate::construct::Construct>,
     /// Evaluation-cache keys of the sketches (by sketch feature id).
@@ -6351,7 +6354,8 @@ fn eval_feature(
         | FeatureKind::SheetFold { .. }
         | FeatureKind::SheetPath { .. }
         | FeatureKind::SheetUnfold { .. }
-        | FeatureKind::SheetConvert { .. } => more::sheet_eval(doc, vals, f, st, warning),
+        | FeatureKind::SheetConvert { .. }
+        | FeatureKind::SheetSurfaceConvert { .. } => more::sheet_eval(doc, vals, f, st, warning),
         FeatureKind::Boss { .. } | FeatureKind::Lip { .. } | FeatureKind::SnapFit { .. } | FeatureKind::Rest { .. } => {
             more::plastic_eval(doc, vals, f, st)
         }
