@@ -24,6 +24,7 @@ mod bom;
 mod browser;
 pub(crate) mod clearance;
 mod clipboard;
+mod clipboard_foreign;
 mod compare;
 mod component;
 mod component_clone;

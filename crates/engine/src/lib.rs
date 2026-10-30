@@ -185,13 +185,15 @@ struct BodyRename {
     names_only: bool,
 }
 
-/// Bodies or component placements copied in one design, for pasting into another
-/// (`component.paste_from_design`): that design's placed model as it was when they were copied,
+/// Bodies, component placements or timeline features copied in one design, for pasting into another:
+/// that design's model as it was when they were copied,
 /// so the copy is what was copied, whatever happens to that design (or its tab) after.
 #[derive(Clone, Debug)]
 pub struct ForeignCopy {
     /// The design's name (it names what the paste adds).
     pub design: String,
+    /// Timeline features, in their original order (`timeline.paste` with `from_design`).
+    pub features: Vec<solidcraft_doc::Feature>,
     /// Its placed model: what its Browser and view showed.
     pub world: Arc<solidcraft_doc::ModelState>,
     /// The bodies copied, as its Browser names them (a body seen in another placement under the
@@ -219,11 +221,28 @@ impl ForeignCopy {
         let placed = placements.iter().filter_map(|p| session.occurrence_placement(p).ok()).map(|p| (p.component, p.occurrence, p.world)).collect();
         ForeignCopy {
             design: session.doc.name.clone(),
+            features: Vec::new(),
             world: session.world_state(),
             bodies,
             names,
             placements,
             placed,
+            doc: session.doc.clone(),
+            model: session.model.clone(),
+            pending_moves: session.pending_moves.clone(),
+        }
+    }
+
+    /// Timeline Copy's snapshot. No placed body geometry is needed to paste sketches.
+    pub fn of_features(session: &Session) -> ForeignCopy {
+        ForeignCopy {
+            design: session.doc.name.clone(),
+            features: session.clipboard.clone(),
+            world: session.model.state(),
+            bodies: Vec::new(),
+            names: Vec::new(),
+            placements: Vec::new(),
+            placed: Vec::new(),
             doc: session.doc.clone(),
             model: session.model.clone(),
             pending_moves: session.pending_moves.clone(),
