@@ -226,7 +226,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         rows
     };
     let mut close = false;
-    panel.window(ctx).show(ctx, |ui| {
+    panel.show(ctx, None, |ui| {
         let (closed, action) = panel.feature(
             ui,
             ui_kit::FeatureOptions {
@@ -1397,6 +1397,22 @@ mod tests {
             assert!(small.bottom() <= 600.0, "{layout}: the actions must remain on screen: {small:?}");
             assert!(small.contains(crate::scenario::handle_at("dialog:ok").unwrap()));
             assert!(crate::scenario::rect_of("dialog:body:viewport").unwrap().height() > 0.0);
+        }
+    }
+    #[test]
+    fn dialog_tab_parameters_stays_inside_its_manager() {
+        let mut h = escape_dialog();
+        h.step(&json!({"click":{"handle":"dialog:Filter"}})).unwrap();
+        let id = h.ctx.memory(|m| m.focused()).unwrap();
+        let layer = h.ctx.read_response(id).unwrap().layer_id;
+        for backwards in [false, true] {
+            for _ in 0..40 {
+                h.step(&json!({"key":"Tab", "shift":backwards})).unwrap();
+                let focused = h.ctx.memory(|m| m.focused()).unwrap();
+                let response = h.ctx.read_response(focused).unwrap();
+                assert_eq!(response.layer_id, layer);
+                assert!(response.rect.is_positive());
+            }
         }
     }
 }
