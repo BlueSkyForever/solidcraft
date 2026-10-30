@@ -62,6 +62,7 @@ pub mod inspect;
 pub mod render;
 pub mod render_lights;
 pub mod render_ui;
+pub mod section;
 pub mod sheet;
 pub mod sketch_constraints;
 pub mod sketch_create;
