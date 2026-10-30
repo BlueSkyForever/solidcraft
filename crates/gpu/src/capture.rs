@@ -192,7 +192,14 @@ impl Capturer {
     }
 
     /// The picture and what it drew, both read while this call has the device to itself.
-    fn draw(&self, scene: &Scene, highlight: Option<GpuScene>, cam: &Camera, [width, height]: [u32; 2], ao_radius: f32) -> Result<(Vec<u8>, DrawStats)> {
+    fn draw(
+        &self,
+        scene: &Scene,
+        highlight: Option<GpuScene>,
+        cam: &Camera,
+        [width, height]: [u32; 2],
+        ao_radius: f32,
+    ) -> Result<(Vec<u8>, DrawStats)> {
         if !(1..=self.max_side).contains(&width) || !(1..=self.max_side).contains(&height) {
             return Err(GpuError::Render(format!("a picture is 1 to {} pixels a side, not {width} × {height}", self.max_side)));
         }
