@@ -1063,6 +1063,8 @@ preference_settings! {
     /// Show engine-derived persistent selection in the ribbon; off retains neutral buttons.
     persistent_ribbon_pressed: bool = true, PAGE_INTERFACE => check_id("prefs.persistent_ribbon_pressed");
     viewport_analysis_status: bool = true, PAGE_INTERFACE => check_id("prefs.viewport_analysis_status");
+    viewport_section_status: bool = true, PAGE_INTERFACE => check_id("prefs.viewport_section_status");
+    viewport_status_summary: bool = true, PAGE_INTERFACE => check_id("prefs.viewport_status_summary");
     /// Keep the SKETCH tab in the ribbon, right after MODEL, while no sketch is open; its drawing
     /// tools then start a sketch first (#7904).
     sketch_tab_always: bool = false, PAGE_INTERFACE => check_id("prefs.sketch_tab_always");
@@ -5016,6 +5018,8 @@ mod tests {
             ("ribbon_labels", json!(false), PAGE_INTERFACE),
             ("persistent_ribbon_pressed", json!(false), PAGE_INTERFACE),
             ("viewport_analysis_status", json!(false), PAGE_INTERFACE),
+            ("viewport_section_status", json!(false), PAGE_INTERFACE),
+            ("viewport_status_summary", json!(false), PAGE_INTERFACE),
             ("sketch_tab_always", json!(true), PAGE_INTERFACE),
             ("ribbon_reveal", json!(true), PAGE_INTERFACE),
             ("dialog_buttons", json!("top"), PAGE_INTERFACE),
@@ -6501,6 +6505,93 @@ mod tests {
         assert!(std::iter::once(&app.session).chain(app.docs.background()).all(|s| !s.single_surface_analysis()));
         super::control(&mut app, &json!({"button":"cancel"})).unwrap();
         assert!(app.preferences.viewport_analysis_status);
+        let after: Vec<_> =
+            std::iter::once(&app.session).chain(app.docs.background()).map(|s| (s.status_items(), s.revision, s.undo.len())).collect();
+        assert_eq!(before, after, "a presentation preference never changes effects in any document");
+    }
+
+    #[test]
+    fn viewport_section_status_preference_checkbox_control_persists_cancels_and_resets() {
+        assert!(Prefs::default().viewport_section_status);
+        assert!(lenient(&json!({"theme":"light"})).viewport_section_status);
+        assert!(lenient(&json!({"viewport_section_status":"no"})).viewport_section_status);
+        let mut h = crate::scenario::Harness::new();
+        let design = h.app.session.doc.to_json();
+        let revision = h.app.session.revision;
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        super::reveal_preference(&mut h, "prefs:viewport_section_status");
+        let checkbox = crate::scenario::handle_at("prefs:viewport_section_status").unwrap();
+        h.call("ui.click", json!({"x":checkbox.x,"y":checkbox.y}));
+        assert!(!h.app.preferences.viewport_section_status);
+        assert_eq!(h.call("ui.prefs", json!({}))["result"]["viewport_section_status"], false);
+        let mut restored = SolveApp::new(Default::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert!(!restored.preferences.viewport_section_status);
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert!(h.app.preferences.viewport_section_status);
+        h.call("ui.prefs", json!({"open":"Interface","viewport_section_status":false,"button":"apply"}));
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        assert!(h.app.preferences.viewport_section_status);
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert!(!h.app.preferences.viewport_section_status);
+        for malformed in [json!("false"), json!(null), json!(0), json!([])] {
+            assert!(super::set(&mut h.app, &json!({"viewport_section_status":malformed})).is_err());
+            assert!(!h.app.preferences.viewport_section_status);
+        }
+        assert_eq!(h.app.session.revision, revision);
+        assert_eq!(h.app.session.doc.to_json(), design);
+    }
+
+    #[test]
+    fn viewport_status_summary_preference_checkbox_control_persists_cancels_and_resets() {
+        assert!(Prefs::default().viewport_status_summary);
+        assert!(lenient(&json!({"theme":"light"})).viewport_status_summary);
+        assert!(lenient(&json!({"viewport_status_summary":"no"})).viewport_status_summary);
+        let mut h = crate::scenario::Harness::new();
+        let design = h.app.session.doc.to_json();
+        let revision = h.app.session.revision;
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        super::reveal_preference(&mut h, "prefs:viewport_status_summary");
+        let checkbox = crate::scenario::handle_at("prefs:viewport_status_summary").unwrap();
+        h.call("ui.click", json!({"x":checkbox.x,"y":checkbox.y}));
+        assert!(!h.app.preferences.viewport_status_summary);
+        assert_eq!(h.call("ui.prefs", json!({}))["result"]["viewport_status_summary"], false);
+        let mut restored = SolveApp::new(Default::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert!(!restored.preferences.viewport_status_summary);
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert!(h.app.preferences.viewport_status_summary);
+        h.call("ui.prefs", json!({"open":"Interface","viewport_status_summary":false,"button":"apply"}));
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        assert!(h.app.preferences.viewport_status_summary);
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert!(!h.app.preferences.viewport_status_summary);
+        for malformed in [json!("false"), json!(null), json!(0), json!([])] {
+            assert!(super::set(&mut h.app, &json!({"viewport_status_summary":malformed})).is_err());
+            assert!(!h.app.preferences.viewport_status_summary);
+        }
+        assert_eq!(h.app.session.revision, revision);
+        assert_eq!(h.app.session.doc.to_json(), design);
+    }
+
+    #[test]
+    fn viewport_section_status_is_independent_of_session_policy_in_background_documents() {
+        let mut app = SolveApp::new(Default::default(), Default::default());
+        super::set(&mut app, &json!({"single_surface_analysis":false,"persistent_ribbon_pressed":false})).unwrap();
+        app.run("inspect.zebra", json!({})).unwrap();
+        app.run("inspect.section", json!({"plane":"XY","at":4})).unwrap();
+        let mut other = solidcraft_engine::Session::default();
+        other.execute("inspect.draft", &json!({})).unwrap();
+        other.execute("inspect.section", &json!({"plane":"XZ","at":-3})).unwrap();
+        crate::documents::open_tab(&mut app, other).unwrap();
+        let before: Vec<_> =
+            std::iter::once(&app.session).chain(app.docs.background()).map(|s| (s.status_items(), s.revision, s.undo.len())).collect();
+        super::control(&mut app, &json!({"open":"Interface","viewport_section_status":false})).unwrap();
+        assert!(!app.preferences.viewport_section_status);
+        assert!(!app.preferences.persistent_ribbon_pressed);
+        assert!(std::iter::once(&app.session).chain(app.docs.background()).all(|s| !s.single_surface_analysis()));
+        super::control(&mut app, &json!({"button":"cancel"})).unwrap();
+        assert!(app.preferences.viewport_section_status);
         let after: Vec<_> =
             std::iter::once(&app.session).chain(app.docs.background()).map(|s| (s.status_items(), s.revision, s.undo.len())).collect();
         assert_eq!(before, after, "a presentation preference never changes effects in any document");

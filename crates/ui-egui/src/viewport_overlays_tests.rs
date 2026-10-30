@@ -1227,6 +1227,7 @@ fn analysis_status_formats_units_and_truthful_non_axis_directions() {
 #[test]
 fn analysis_status_escape_ends_live_tool_before_effect_and_never_hidden_section() {
     let mut h = Harness::new();
+    h.app.preferences.viewport_section_status = false;
     h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
     h.app.start("inspect.continuity");
     assert!(h.app.tool.is_some());
@@ -1281,6 +1282,104 @@ fn analysis_status_ignores_invalid_layout_bounds_without_ending_the_effect() {
         crate::viewport_status::show(&mut h.app, &h.ctx, bounds);
         assert_eq!((h.app.session.status_items(), h.app.session.revision), before);
     }
+}
+
+#[test]
+fn section_status_formats_actual_geometry_in_design_units_without_flip_sign_changes() {
+    let mut h = Harness::new();
+    for (params, metric, imperial) in [
+        (json!({"plane":"XY","at":25.4,"hatch":false}), "Z 25.40 mm", "Z 1.000 in"),
+        (json!({"plane":"XZ","at":-25.4,"flip":true}), "Y -25.40 mm · hatch", "Y -1.000 in · hatch"),
+        (json!({"plane":{"origin":[-25.4,8,2],"normal":[-3,0,0]},"hatch":false}), "X -25.40 mm", "X -1.000 in"),
+        (json!({"plane":{"origin":[0,0,25.4],"normal":[1e-10,0,-2]},"hatch":false}), "Z 25.40 mm", "Z 1.000 in"),
+        (json!({"plane":{"origin":[-12,-9,4],"normal":[3,4,0]},"hatch":false}), "tilted · -14.40 mm", "tilted · -0.5669 in"),
+        (json!({"plane":{"origin":[-12,-9,4],"normal":[3,4,0]},"flip":true}), "tilted · -14.40 mm · hatch", "tilted · -0.5669 in · hatch"),
+    ] {
+        h.app.session.doc_mut().units = "mm".into();
+        h.app.run("inspect.section", params).unwrap();
+        let effect = h.app.session.status_items().into_iter().find(|e| e.command == "inspect.section").unwrap();
+        for (units, expected) in [("mm", metric), ("in", imperial)] {
+            h.app.session.doc_mut().units = units.into();
+            let item = crate::viewport_status::presentation(&h.app, &effect).unwrap();
+            assert_eq!(item.setting, expected);
+            assert!(item.editable && !item.has_key);
+            assert_eq!(item.name, crate::toolbar::persistent_button_name(&h.app, solidcraft_engine::find_command("inspect.section").unwrap()));
+        }
+    }
+}
+
+#[test]
+fn section_status_and_analysis_keep_slots_clear_independently_and_filter_escape_by_preferences() {
+    let mut h = Harness::new();
+    h.app.run("inspect.zebra", json!({})).unwrap();
+    h.app.run("inspect.section", json!({"plane":"XY","at":4})).unwrap();
+    h.app.run("inspect.draft", json!({})).unwrap();
+    let before = h.app.session.status_items();
+    assert_eq!(before.iter().map(|e| e.command.as_str()).collect::<Vec<_>>(), ["inspect.draft", "inspect.section"]);
+    assert!(crate::viewport_status::escape(&mut h.app, false));
+    assert!(h.app.session.analysis.is_none() && h.app.session.section.is_some());
+    assert!(crate::viewport_status::escape(&mut h.app, true));
+    assert!(h.app.session.section.is_some(), "repeat cannot cascade");
+    h.app.run("inspect.zebra", json!({})).unwrap();
+    h.app.run("inspect.section", json!({"plane":"YZ","at":2})).unwrap();
+    h.app.preferences.viewport_section_status = false;
+    assert!(crate::viewport_status::escape(&mut h.app, false));
+    assert!(h.app.session.analysis.is_none() && h.app.session.section.is_some(), "hidden Section is ineligible");
+    h.app.preferences.viewport_analysis_status = false;
+    assert!(!crate::viewport_status::escape(&mut h.app, false));
+    h.app.preferences.viewport_section_status = true;
+    h.app.run("inspect.zebra", json!({})).unwrap();
+    assert!(crate::viewport_status::escape(&mut h.app, false));
+    assert!(h.app.session.analysis.is_some() && h.app.session.section.is_none(), "Section clears while analysis HUD is disabled");
+    h.app.preferences.viewport_analysis_status = true;
+    h.app.run("inspect.section", json!({"plane":"XY"})).unwrap();
+    h.frames(3);
+    let section = h.app.session.status_items().into_iter().find(|e| e.command == "inspect.section").unwrap();
+    let item = crate::viewport_status::presentation(&h.app, &section).unwrap();
+    h.step(&json!({"click":{"handle":format!("viewport_status:{}:close",item.id)}})).unwrap();
+    assert!(h.app.session.analysis.is_some() && h.app.session.section.is_none());
+}
+
+#[test]
+fn section_status_preserves_legacy_three_items_and_dialog_escape_ownership() {
+    let mut h = Harness::new();
+    h.app.preferences.viewport_status_summary = false;
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+    h.call("ui.prefs", json!({"single_surface_analysis":false}));
+    h.app.run("inspect.zebra", json!({})).unwrap();
+    h.app.run("inspect.continuity", json!({})).unwrap();
+    h.app.run("inspect.section", json!({"plane":"XY","at":3})).unwrap();
+    h.frames(3);
+    let effects = h.app.session.status_items();
+    assert_eq!(effects.len(), 3);
+    for effect in &effects {
+        let item = crate::viewport_status::presentation(&h.app, effect).unwrap();
+        assert!(crate::scenario::rect_of(&format!("viewport_status:{}:item", item.id)).is_some());
+    }
+    crate::dialogs::edit_section(&mut h.app);
+    h.frames(3);
+    let cut = h.app.session.section;
+    h.step(&json!({"key":"Escape"})).unwrap();
+    assert!(h.app.dialog.is_none());
+    assert_eq!(h.app.session.section, cut);
+    h.step(&json!({"key":"Escape"})).unwrap();
+    assert!(h.app.session.section.is_none());
+    assert!(h.app.session.analysis.is_some() && !h.app.session.continuity.is_empty());
+}
+
+#[test]
+fn section_close_ends_actual_cut_while_an_unrelated_tool_owns_escape() {
+    let mut h = Harness::new();
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+    h.app.start("inspect.continuity");
+    h.app.run("inspect.section", json!({"plane":"XY","at":4})).unwrap();
+    h.frames(3);
+    assert!(h.app.tool.is_some());
+    let effect = h.app.session.status_items().into_iter().find(|e| e.command == "inspect.section").unwrap();
+    let item = crate::viewport_status::presentation(&h.app, &effect).unwrap();
+    h.step(&json!({"click":{"handle":format!("viewport_status:{}:close",item.id)}})).unwrap();
+    assert!(h.app.session.section.is_none());
+    assert!(h.app.tool.is_some() && !h.app.session.continuity.is_empty());
 }
 
 #[test]
@@ -1408,6 +1507,7 @@ fn analysis_status_focused_dialog_and_real_text_popup_preserve_owner_priority_in
     for enabled in [false, true] {
         for popup in [false, true] {
             let mut h = Harness::new();
+            h.app.preferences.viewport_section_status = false;
             h.call("ui.prefs", json!({"viewport_analysis_status":enabled}));
             h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
             h.app.run("inspect.draft", json!({})).unwrap();
@@ -1496,6 +1596,7 @@ fn analysis_escape_relayout_frame(h: &mut Harness, mut first_pass: impl FnMut(&c
 fn analysis_status_preferences_cancel_can_restore_either_policy_without_reusing_escape() {
     for saved in [false, true] {
         let mut h = Harness::new();
+        h.app.preferences.viewport_section_status = false;
         h.call("ui.prefs", json!({"viewport_analysis_status":saved}));
         h.app.run("inspect.zebra", json!({})).unwrap();
         h.call("ui.prefs", json!({"open":"Interface"}));
@@ -1515,6 +1616,7 @@ fn analysis_status_preferences_cancel_can_restore_either_policy_without_reusing_
 #[test]
 fn analysis_status_preferences_restore_false_keeps_underlying_dialog_through_the_owned_frame() {
     let mut h = Harness::new();
+    h.app.preferences.viewport_section_status = false;
     h.call("ui.prefs", json!({"viewport_analysis_status":false}));
     h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
     h.app.run("inspect.draft", json!({})).unwrap();
@@ -1534,4 +1636,356 @@ fn analysis_status_preferences_restore_false_keeps_underlying_dialog_through_the
     assert!(h.app.session.analysis.is_some());
     h.step(&json!({"key":"Escape"})).unwrap();
     assert!(h.app.session.analysis.is_some(), "the restored legacy policy keeps shading on idle Escape");
+}
+
+#[test]
+fn section_only_status_modal_owners_take_first_escape_across_real_layout_repasses() {
+    for owner in ["preferences", "command", "tool", "search"] {
+        let mut h = Harness::new();
+        h.call("ui.prefs", json!({"viewport_analysis_status":false,"viewport_section_status":true}));
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+        h.app.run("inspect.section", json!({"plane":"XY","at":4})).unwrap();
+        match owner {
+            "preferences" => {
+                h.call("ui.prefs", json!({"open":"Interface"}));
+            }
+            "command" => h.app.start("solid.fillet"),
+            "tool" => h.app.start("inspect.continuity"),
+            _ => h.app.start("ui.palette"),
+        }
+        h.frames(3);
+        h.ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
+        let cut = h.app.session.section;
+        analysis_escape_relayout_frame(&mut h, |app| {
+            assert_eq!(app.session.section, cut, "{owner} owns the tap in pass one");
+            assert!(!app.prefs_window.open && app.dialog.is_none() && app.tool.is_none() && !app.ui.palette_open);
+        });
+        assert_eq!(h.app.session.section, cut, "{owner} keeps the cut through the discarded frame");
+        h.step(&json!({"key":"Escape"})).unwrap();
+        assert!(h.app.session.section.is_none(), "a distinct idle tap clears Section after {owner}");
+    }
+}
+
+#[test]
+fn section_only_status_real_editor_popup_then_dialog_own_escape_before_the_cut() {
+    let mut h = Harness::new();
+    h.call("ui.prefs", json!({"viewport_analysis_status":false,"viewport_section_status":true}));
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+    h.app.run("inspect.section", json!({"plane":"XY","at":4})).unwrap();
+    h.app.start("solid.fillet");
+    h.frames(3);
+    let at = crate::scenario::handle_at("dialog:Radius").unwrap();
+    h.call("ui.click", json!({"x":at.x,"y":at.y}));
+    assert!(h.ctx.memory(|memory| memory.focused().is_some()));
+    h.call("ui.click", json!({"x":at.x,"y":at.y,"button":"right"}));
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    let cut = h.app.session.section;
+    analysis_escape_relayout_frame(&mut h, |app| {
+        assert!(app.dialog.is_some(), "the real popup has first refusal before Dialog cancellation");
+        assert_eq!(app.session.section, cut);
+    });
+    assert!(!egui::Popup::is_any_open(&h.ctx));
+    assert!(h.app.dialog.is_some());
+    h.step(&json!({"key":"Escape"})).unwrap();
+    assert!(h.app.dialog.is_none());
+    assert_eq!(h.app.session.section, cut, "the distinct second tap belongs to the command dialog");
+    h.step(&json!({"key":"Escape"})).unwrap();
+    assert!(h.app.session.section.is_none());
+}
+
+#[test]
+fn section_and_analysis_key_release_distinct_idle_escape_to_the_newest_cut() {
+    let mut h = Harness::new();
+    h.app.run("inspect.draft", json!({})).unwrap();
+    h.app.run("inspect.section", json!({"plane":"XY","at":4})).unwrap();
+    h.frames(3);
+    let effect = h.app.session.status_items().into_iter().find(|effect| effect.has_key).unwrap();
+    let item = crate::viewport_status::presentation(&h.app, &effect).unwrap();
+    h.step(&json!({"click":{"handle":format!("viewport_status:{}:key",item.id)}})).unwrap();
+    assert!(h.app.viewport_status.open_key.is_some());
+    let cut = h.app.session.section;
+    analysis_escape_relayout_frame(&mut h, |app| {
+        assert!(app.viewport_status.open_key.is_none());
+        assert_eq!(app.session.section, cut, "a coexisting analysis key owns the first tap");
+    });
+    assert!(h.app.session.analysis.is_some());
+    h.step(&json!({"key":"Escape"})).unwrap();
+    assert!(h.app.session.section.is_none() && h.app.session.analysis.is_some());
+}
+
+#[test]
+fn section_only_preferences_cancel_restores_either_policy_and_shields_existing_dialog() {
+    for saved in [false, true] {
+        let mut h = Harness::new();
+        h.call("ui.prefs", json!({"viewport_analysis_status":false,"viewport_section_status":saved}));
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+        h.app.run("inspect.section", json!({"plane":"XY","at":4})).unwrap();
+        if !saved {
+            h.app.start("solid.fillet");
+        }
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        h.call("ui.prefs", json!({"viewport_section_status":!saved}));
+        let cut = h.app.session.section;
+        analysis_escape_relayout_frame(&mut h, |app| {
+            assert!(!app.prefs_window.open);
+            assert_eq!(app.preferences.viewport_section_status, saved);
+            assert!(!app.preferences.viewport_analysis_status);
+            assert_eq!(app.dialog.is_some(), !saved, "enabled routing protects the existing form in pass one");
+            assert_eq!(app.session.section, cut);
+        });
+        assert_eq!(h.app.dialog.is_some(), !saved, "no tap is reinserted during the actual second pass");
+        if !saved {
+            h.step(&json!({"key":"Escape"})).unwrap();
+            assert!(h.app.dialog.is_none());
+            assert_eq!(h.app.session.section, cut);
+        }
+        h.step(&json!({"key":"Escape"})).unwrap();
+        assert_eq!(h.app.session.section.is_none(), saved, "both-false restores the actual legacy idle policy");
+    }
+}
+
+#[test]
+fn section_only_status_stays_below_preferences_for_paint_and_hit_testing() {
+    let mut h = Harness::new();
+    h.call("ui.prefs", json!({"viewport_analysis_status":false,"viewport_section_status":true}));
+    h.app.run("inspect.section", json!({"plane":"XY","at":4})).unwrap();
+    h.frames(3);
+    h.call("ui.prefs", json!({"open":"Interface"}));
+    h.frames(3);
+    let effect = h.app.session.status_items().into_iter().find(|e| e.command == "inspect.section").unwrap();
+    let item = crate::viewport_status::presentation(&h.app, &effect).unwrap();
+    let at = crate::scenario::handle_at(&format!("viewport_status:{}:close", item.id)).unwrap();
+    assert!(crate::scenario::rect_of("prefs:window").unwrap().contains(at));
+    assert_eq!(h.ctx.layer_id_at(at).unwrap().order, egui::Order::Middle);
+    h.call("ui.click", json!({"x":at.x,"y":at.y}));
+    assert!(h.app.prefs_window.open && h.app.session.section.is_some());
+}
+
+// Summary fixtures below exercise component kinds unavailable from current production producers.
+#[test]
+fn summary_component_uses_supplied_newest_and_aggregate_attention_at_three_and_four() {
+    use crate::ui_kit::{StatusItem, StatusKind, StatusPresentation, viewport_status_summary};
+    for count in [3, 4, 12] {
+        for newest_kind in [StatusKind::Mode, StatusKind::Result, StatusKind::Attention] {
+            for warning in [false, true] {
+                let ctx = crate::fonts::test_context();
+                let mut state = StatusPresentation::default();
+                let items: Vec<_> = (0..count)
+                    .map(|i| StatusItem {
+                        id: format!("summary_{i}"),
+                        kind: if i == 0 {
+                            newest_kind
+                        } else if warning && i == 1 {
+                            StatusKind::Attention
+                        } else {
+                            StatusKind::Mode
+                        },
+                        name: format!("Source {i}"),
+                        setting: format!("{i} mm"),
+                        has_key: false,
+                        editable: false,
+                    })
+                    .collect();
+                for width in [320.0, 1600.0] {
+                    let free = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0));
+                    let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(free), ..Default::default() }, |_| {
+                        viewport_status_summary(&ctx, free, &items, "summary_0", &mut state, |_, _| {});
+                    });
+                    let mut name = false;
+                    let mut more = false;
+                    let mut dot = false;
+                    let t = Tokens::get();
+                    for shape in &output.shapes {
+                        crate::test_support::each_shape(&shape.shape, &mut |shape| match shape {
+                            Shape::Text(text) if text.galley.job.text == "Source 0" => name = true,
+                            Shape::Text(text) if text.galley.job.text == format!("+{}", count - 1) => more = true,
+                            Shape::Circle(circle) if circle.fill == t.warning && circle.radius == t.space_3 => dot = true,
+                            _ => {}
+                        });
+                    }
+                    output.textures_delta.clear();
+                    assert!(name && more, "supplied newest is the first slot at every width");
+                    assert_eq!(dot, warning || newest_kind == StatusKind::Attention);
+                }
+            }
+        }
+    }
+}
+
+fn summary_three_effects() -> Harness {
+    let mut h = Harness::new();
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+    h.call("ui.prefs", json!({"single_surface_analysis":false}));
+    h.app.run("inspect.zebra", json!({})).unwrap();
+    h.app.run("inspect.continuity", json!({})).unwrap();
+    h.app.run("inspect.section", json!({"plane":"XY","at":3})).unwrap();
+    assert_eq!(h.app.session.status_items().len(), 3);
+    h.frames(4);
+    h
+}
+
+#[test]
+fn summary_count_switch_is_independent_of_width_and_legacy_preference_keeps_effects() {
+    let mut h = summary_three_effects();
+    for summary in [true, false] {
+        h.call("ui.prefs", json!({"viewport_status_summary":summary}));
+        for width in [640, 1600] {
+            h.call("ui.resize", json!({"width":width,"height":900}));
+            h.frames(4);
+            assert_eq!(crate::scenario::rect_of("viewport_status:summary").is_some(), summary);
+            for effect in h.app.session.status_items() {
+                let item = crate::viewport_status::presentation(&h.app, &effect).unwrap();
+                assert_eq!(crate::scenario::rect_of(&format!("viewport_status:{}:item", item.id)).is_some(), !summary);
+            }
+        }
+    }
+    h.app.run("inspect.continuity", json!({"clear":true})).unwrap();
+    h.call("ui.prefs", json!({"viewport_status_summary":true}));
+    for width in [640, 1600] {
+        h.call("ui.resize", json!({"width":width,"height":900}));
+        h.frames(4);
+        assert!(crate::scenario::rect_of("viewport_status:summary").is_none());
+        assert_eq!(h.app.session.status_items().len(), 2);
+    }
+}
+
+#[test]
+fn summary_native_menu_escape_is_close_only_then_newest_replacement_clears_and_unfolds() {
+    let mut h = summary_three_effects();
+    let oldest = h.app.session.status_items().first().unwrap().id;
+    h.app.run("inspect.draft", json!({})).unwrap();
+    h.frames(3);
+    assert_eq!(h.app.session.status_items().first().unwrap().id, oldest);
+    let latest = h.app.session.newest_status_item(&[solidcraft_engine::status_items::StatusId::SurfaceAnalysis]).unwrap();
+    let item = crate::viewport_status::presentation(&h.app, &latest).unwrap();
+    assert!(crate::scenario::rect_of(&format!("viewport_status:{}:summary", item.id)).is_some());
+    h.step(&json!({"click":{"handle":"viewport_status:summary"}})).unwrap();
+    h.frames(3);
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    assert!(crate::scenario::rect_of("menu:viewport_status_clear_all").is_some());
+    let mut previous = f32::NEG_INFINITY;
+    for effect in h.app.session.status_items() {
+        let item = crate::viewport_status::presentation(&h.app, &effect).unwrap();
+        let close = crate::scenario::rect_of(&format!("viewport_status:{}:close", item.id)).unwrap();
+        assert!(close.top() > previous, "menu order follows oldest slots rather than newest activation");
+        previous = close.top();
+    }
+    analysis_escape_relayout_frame(&mut h, |app| {
+        assert_eq!(app.session.status_items().len(), 3, "footer Esc hint is not a clear-all binding");
+    });
+    assert!(!egui::Popup::is_any_open(&h.ctx));
+    assert_eq!(h.app.session.status_items().len(), 3);
+    h.step(&json!({"key":"Escape"})).unwrap();
+    h.frames(3);
+    assert!(h.app.session.analysis.is_none());
+    assert!(h.app.session.section.is_some() && !h.app.session.continuity.is_empty());
+    assert!(crate::scenario::rect_of("viewport_status:summary").is_none());
+}
+
+#[test]
+fn summary_popup_closes_on_preference_count_and_replacement_transitions() {
+    for transition in ["disable", "count", "replace", "zero"] {
+        let mut h = summary_three_effects();
+        h.step(&json!({"click":{"handle":"viewport_status:summary"}})).unwrap();
+        h.frames(3);
+        assert!(egui::Popup::is_any_open(&h.ctx));
+        match transition {
+            "disable" => h.app.preferences.viewport_status_summary = false,
+            "count" => {
+                h.app.run("inspect.section", json!({"clear":true})).unwrap();
+            }
+            "replace" => {
+                h.app.run("inspect.draft", json!({})).unwrap();
+            }
+            _ => crate::viewport_status::dispatch(&mut h.app, vec![crate::ui_kit::StatusAction::ClearAll]),
+        }
+        crate::viewport_status::reconcile(&mut h.app, &h.ctx);
+        assert!(!egui::Popup::is_any_open(&h.ctx), "{transition} closes only the stale summary owner");
+        assert!(!h.app.viewport_status.owns_focus(&h.ctx));
+        h.frames(3);
+        if transition == "zero" {
+            assert!(h.app.session.status_items().is_empty());
+        } else {
+            assert!(h.app.session.analysis.is_some());
+        }
+    }
+}
+
+#[test]
+fn summary_dispatch_reconciles_current_sources_hidden_items_and_actual_clear_failures() {
+    use crate::ui_kit::StatusAction;
+    let mut h = summary_three_effects();
+    let old = h.app.session.status_items().into_iter().find(|e| e.command == "inspect.zebra").unwrap();
+    let old = crate::viewport_status::presentation(&h.app, &old).unwrap().id;
+    h.app.run("inspect.draft", json!({})).unwrap();
+    crate::viewport_status::dispatch(&mut h.app, vec![StatusAction::Clear(old)]);
+    assert!(h.app.session.analysis.is_some(), "stale identity cannot clear a replacement");
+    // The host picker blocks actual command execution before engine dispatch.
+    h.app.services.pick_open = Some(Box::new(|_| Box::pin(std::future::pending())));
+    h.app.pick_open(|_, _| {});
+    assert!(h.app.file_picker_busy());
+    crate::viewport_status::dispatch(&mut h.app, vec![StatusAction::ClearAll]);
+    assert_eq!(h.app.session.status_items().len(), 3, "failed commands never remove UI-owned copies");
+    assert!(h.app.status.as_ref().is_some_and(|(_, _, error)| *error));
+    h.app.file_picker = None;
+    h.app.preferences.viewport_section_status = false;
+    crate::viewport_status::dispatch(&mut h.app, vec![StatusAction::ClearAll]);
+    assert!(h.app.session.analysis.is_none() && h.app.session.continuity.is_empty());
+    assert!(h.app.session.section.is_some(), "footer scope is currently represented effects only");
+}
+
+#[test]
+fn summary_footer_pointer_and_native_keyboard_dispatch_clear_all_without_a_key_binding() {
+    for keyboard in [false, true] {
+        let mut h = summary_three_effects();
+        h.step(&json!({"click":{"handle":"viewport_status:summary"}})).unwrap();
+        h.frames(3);
+        if keyboard {
+            // Follow real native focus traversal rather than assigning a widget ID.
+            let footer = crate::scenario::rect_of("menu:viewport_status_clear_all").unwrap();
+            let mut reached = false;
+            for _ in 0..16 {
+                h.step(&json!({"key":"Tab"})).unwrap();
+                reached =
+                    h.ctx.memory(|memory| memory.focused()).and_then(|id| h.ctx.read_response(id)).is_some_and(|response| response.rect == footer);
+                if reached {
+                    break;
+                }
+            }
+            assert!(reached, "native Tab reaches the footer");
+            h.step(&json!({"key":"Tab", "shift":true})).unwrap();
+            assert!(h.ctx.memory(|memory| memory.focused()).and_then(|id| h.ctx.read_response(id)).is_some_and(|response| response.rect != footer));
+            h.step(&json!({"key":"Tab"})).unwrap();
+            h.step(&json!({"key":"Space"})).unwrap();
+        } else {
+            h.step(&json!({"click":{"handle":"menu:viewport_status_clear_all"}})).unwrap();
+        }
+        h.frames(3);
+        assert!(h.app.session.status_items().is_empty());
+        assert!(!egui::Popup::is_any_open(&h.ctx));
+        assert!(crate::scenario::rect_of("viewport_status:summary").is_none());
+    }
+}
+
+#[test]
+fn summary_preferences_cancel_restores_layout_independently_of_all_effect_policies() {
+    for saved in [false, true] {
+        let mut h = summary_three_effects();
+        h.call("ui.prefs", json!({"viewport_status_summary":saved}));
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        h.call("ui.prefs", json!({"viewport_status_summary":!saved}));
+        analysis_escape_relayout_frame(&mut h, |app| {
+            assert_eq!(app.preferences.viewport_status_summary, saved);
+            assert_eq!(app.session.status_items().len(), 3);
+            assert!(!app.preferences.single_surface_analysis);
+            assert!(app.preferences.viewport_analysis_status && app.preferences.viewport_section_status);
+            assert!(app.preferences.persistent_ribbon_pressed);
+        });
+        h.frames(3);
+        assert_eq!(crate::scenario::rect_of("viewport_status:summary").is_some(), saved);
+    }
 }

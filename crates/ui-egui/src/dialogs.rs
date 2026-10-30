@@ -2566,6 +2566,9 @@ fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, names: crate::pref
 
 /// Saved vectors/axes are real inputs even when they have no origin-axis selection chip.
 fn feature_pattern_reference_key(d: &Dialog, index: usize) -> Option<&'static str> {
+    if matches!(d.kind, Kind::Section { .. }) && index == 0 {
+        return Some("plane");
+    }
     if !d.inputs.first().is_some_and(|i| i.accept == selection::FEATURES) {
         return None;
     }
@@ -2603,7 +2606,9 @@ pub(crate) fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, n
                 let custom_axis = i == 1 && inp.items.is_empty() && stored_revolve_axis(&d.kind).is_some();
                 let filled = !inp.items.is_empty() || custom_axis || stored_reference.is_some();
                 let text = if filled {
-                    RichText::new(if custom_axis || stored_reference.is_some() {
+                    RichText::new(if stored_reference.is_some() && matches!(d.kind, Kind::Section { .. }) {
+                        crate::i18n::tr("ui.viewport_status_section_plane").into()
+                    } else if custom_axis || stored_reference.is_some() {
                         crate::i18n::tr("dialog.custom_axis").into()
                     } else if !inp.multi {
                         inp.items.first().map(|item| selection_label(s, names, d, inp, item)).unwrap_or_default()
@@ -3054,7 +3059,7 @@ pub(crate) fn corner_confirms(d: &Dialog) -> bool {
 /// Sketch Palette keeps the right there, and the dialog takes the left so both stay on screen.
 /// With Dialogs › In the left column it holds the left column instead (`dialog_column`).
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
-    let escape_routed_here = !app.preferences.viewport_analysis_status || app.escape_owner.is_none_or(|owner| owner == crate::EscapeOwner::Dialog);
+    let escape_routed_here = !crate::viewport_status::enabled(app) || app.escape_owner.is_none_or(|owner| owner == crate::EscapeOwner::Dialog);
     // A click in the view's corner is for the dialog open this frame, or for none.
     let corner = app.viewport.corner.take();
     app.viewport.corner_ok = false;
@@ -3955,18 +3960,42 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
     if let Kind::Section { offset, flip, hatch } = &d.kind
         && let Some(cut) = app.session.section
     {
-        app.tree.section_dialog = Some(SectionDraft { offset: offset.clone(), flip: *flip, hatch: *hatch, plane: sels(d, 0).to_vec(), cut });
+        app.tree.section_dialog = if d.extra.contains_key("plane") && sels(d, 0).is_empty() {
+            None // Programmatic geometry is reconstructed from the actual session, never cached.
+        } else {
+            Some(SectionDraft { offset: offset.clone(), flip: *flip, hatch: *hatch, plane: sels(d, 0).to_vec(), cut })
+        };
     }
     Ok(())
 }
 
 /// Edit Section Analysis: its dialog, where the dialog that made the section shown (or hidden)
-/// now left it, so the cut moves on from there. A section made some other way opens it afresh,
-/// as the toolbar always does (a new section, in place of the old).
+/// now left it. Programmatic cuts use their actual geometry in the same existing form.
 pub fn edit_section(app: &mut SolveApp) {
-    app.start("inspect.section");
+    app.start_section_edit();
     let cut = app.session.section.or(app.tree.hidden_section);
-    let Some(last) = app.tree.section_dialog.clone().filter(|last| cut.is_some_and(|c| same_cut(c, last.cut))) else { return };
+    let last = app.tree.section_dialog.clone().filter(|last| cut.is_some_and(|c| same_cut(c, last.cut)));
+    if app.preferences.viewport_section_status {
+        if let Some((origin, normal)) = cut {
+            let o = [origin.x, origin.y, origin.z];
+            let n = [normal.x, normal.y, normal.z];
+            if let Some((_, distance, canonical)) = crate::viewport_status::section_coordinates(o, n) {
+                let flip = n.iter().zip(canonical).map(|(a, b)| a * b).sum::<f64>() < 0.0;
+                let offset = format!("{distance} mm");
+                let hatch = app.session.section_hatch;
+                if let Some(d) = app.dialog.as_mut().filter(|d| matches!(d.kind, Kind::Section { .. })) {
+                    d.kind = Kind::Section { offset, flip, hatch };
+                    if let Some(input) = d.inputs.first_mut() {
+                        input.items.clear();
+                    }
+                    let base = o.into_iter().zip(canonical).map(|(o, n)| o - n * distance).collect::<Vec<_>>();
+                    d.extra.insert("plane".into(), json!({"origin":base,"normal":canonical}));
+                }
+            }
+        }
+        return;
+    }
+    let Some(last) = last else { return };
     if let Some(d) = app.dialog.as_mut().filter(|d| matches!(d.kind, Kind::Section { .. })) {
         d.kind = Kind::Section { offset: last.offset, flip: last.flip, hatch: last.hatch };
         if let Some(plane) = d.inputs.first_mut() {
@@ -4669,11 +4698,14 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             ("material.assign", json!({"bodies": sels(d, 0).body_names(), "material": name}))
         }
         Kind::Section { offset, flip, hatch } => {
-            if section_turns_off(s, &d.inputs) {
+            if section_turns_off(s, &d.inputs) && !d.extra.contains_key("plane") {
                 return Ok(vec![("inspect.section".into(), json!({"clear": true}))]);
             }
-            need(0, "a plane or planar face")?;
+            if !d.extra.contains_key("plane") {
+                need(0, "a plane or planar face")?;
+            }
             let plane = match sels(d, 0).first() {
+                None if d.extra.contains_key("plane") => d.extra.get("plane").cloned().ok_or("select a plane first")?,
                 Some(Sel::Plane { name }) if matches!(name.as_str(), "XY" | "XZ" | "YZ") => json!(name),
                 Some(Sel::Face { body, index, point }) => {
                     let (_, n) = planar_face(s, body, *index).ok_or("the face must be planar")?;

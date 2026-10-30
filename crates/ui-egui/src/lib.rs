@@ -1448,16 +1448,21 @@ impl SolveApp {
 
     /// Start an interactive command with its menu anchored below the invoking button.
     pub(crate) fn start_at(&mut self, id: &str, opener: Option<egui::Rect>) {
-        self.start_with_variant_memory(id, true, opener);
+        self.start_with_variant_memory(id, true, opener, false);
     }
 
     /// A dedicated toolbar button starts its exact tool without replacing the sketch family's
     /// main button. Choosing a variant from a menu still uses `start` and remembers that choice.
     pub(crate) fn start_pinned(&mut self, id: &str, opener: Option<egui::Rect>) {
-        self.start_with_variant_memory(id, false, opener);
+        self.start_with_variant_memory(id, false, opener, false);
     }
 
-    fn start_with_variant_memory(&mut self, id: &str, remember_variant: bool, opener: Option<egui::Rect>) {
+    /// Existing Section editor uses the normal command-start lifecycle, with explicit edit intent.
+    pub(crate) fn start_section_edit(&mut self) {
+        self.start_with_variant_memory("inspect.section", true, None, true);
+    }
+
+    fn start_with_variant_memory(&mut self, id: &str, remember_variant: bool, opener: Option<egui::Rect>, section_edit: bool) {
         self.tree.clear_folder_pick();
         if id == "timeline.play" {
             if let Err(why) = self.run(id, json!({})) {
@@ -1707,7 +1712,7 @@ impl SolveApp {
             });
             return;
         }
-        if !sketch_tools::start_hook(self, id) {
+        if !section_edit && !sketch_tools::start_hook(self, id) {
             return;
         }
         if remember_variant && solidcraft_engine::find_command(id).is_some_and(|c| c.info(&self.session).enabled) {
@@ -2505,7 +2510,7 @@ impl SolveApp {
         if first_pass {
             self.escape_owner = None;
         }
-        if first_pass || !self.preferences.viewport_analysis_status {
+        if first_pass || !crate::viewport_status::enabled(self) {
             self.esc_handled = false;
         }
         prefs::apply(self, ctx);

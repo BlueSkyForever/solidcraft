@@ -2,10 +2,15 @@
 
 For UI-kit review, `ui.status_fixture {"preset":"mode"}` shows bounded status
 specimens in the real viewport. Presets are `off`, `mode`, `result`, `attention`,
-`row`, `kinds` and `key`; the reply carries the preset and item count. This
+`row`, `kinds`, `many` and `key`; the reply carries the preset and item count. This
 scenario fixture does not change engine state or open a dialog. `off` clears it.
 The published `viewport_status:<id>:item`, `:setting`, `:key` and `:close` handles
 support the ordinary `ui.at`, `ui.move`, `ui.click` and keyboard controls.
+With `viewport_status_summary` enabled, `kinds` (three) and `many` (four) exercise
+the summary component, using explicit specimen newest metadata. The
+`viewport_status:summary` and `menu:viewport_status_clear_all` handles open its
+native menu and activate its footer. These specimens are not persistent engine
+results; actual production sources currently supply at most three Mode items.
 
 The control channel is **on by default**. SolidCraft listens on `127.0.0.1` only, for JSON lines,
 so agents can drive the app without a launch flag. Every connection still needs this launch's
