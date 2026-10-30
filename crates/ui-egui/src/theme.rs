@@ -33,7 +33,7 @@ thread_local! {
     static VIEWPORT_DARK: Cell<Option<bool>> = const { Cell::new(None) };
     /// The 3D view's background colour when Preferences give it one (#7688), per thread like the
     /// rest. `None`: the theme's gradient.
-    static VIEWPORT_BACKGROUND: Cell<Option<[u8; 3]>> = const { Cell::new(None) };
+    static VIEWPORT_BACKGROUND: Cell<Option<([u8; 3], [u8; 3])>> = const { Cell::new(None) };
 }
 
 /// Three structural border levels plus independent content and control outlines.
@@ -365,8 +365,9 @@ pub fn viewport_dark() -> bool {
     VIEWPORT_DARK.get().unwrap_or_else(is_dark)
 }
 
-/// The 3D view's own background colour, or `None` for the theme's gradient (#7688).
-pub fn viewport_background() -> Option<[u8; 3]> {
+/// The 3D view's own background, top and bottom: one colour (#7688) or a gradient (#9230), or
+/// `None` for the theme's gradient.
+pub fn viewport_background() -> Option<([u8; 3], [u8; 3])> {
     VIEWPORT_BACKGROUND.get()
 }
 
@@ -898,11 +899,12 @@ impl Tokens {
         Tokens::themed(viewport_dark(), vision()).with_background(viewport_background())
     }
 
-    /// These tokens with the 3D view's background one flat colour (#7688), or as they are for `None`.
-    pub fn with_background(mut self, colour: Option<[u8; 3]>) -> Tokens {
-        if let Some([r, g, b]) = colour {
+    /// These tokens with the 3D view's background the user's own, top and bottom: one flat colour
+    /// (#7688) or a gradient (#9230), or as they are for `None`.
+    pub fn with_background(mut self, background: Option<([u8; 3], [u8; 3])>) -> Tokens {
+        if let Some(([r, g, b], [r2, g2, b2])) = background {
             self.viewport_top = Color32::from_rgb(r, g, b);
-            self.viewport_bottom = self.viewport_top;
+            self.viewport_bottom = Color32::from_rgb(r2, g2, b2);
         }
         self
     }
@@ -1039,9 +1041,10 @@ pub fn set_viewport_dark(dark: Option<bool>) {
     VIEWPORT_DARK.set(dark);
 }
 
-/// Give the 3D view a background colour of its own (#7688), or `None` for the theme's gradient.
-pub fn set_viewport_background(colour: Option<[u8; 3]>) {
-    VIEWPORT_BACKGROUND.set(colour);
+/// Give the 3D view a background of its own, top and bottom (#7688, #9230), or `None` for the
+/// theme's gradient.
+pub fn set_viewport_background(background: Option<([u8; 3], [u8; 3])>) {
+    VIEWPORT_BACKGROUND.set(background);
 }
 
 fn visuals(dark: bool) -> egui::Visuals {

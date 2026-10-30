@@ -1,0 +1,9 @@
+{
+  "en": { "prefs.viewport_background_gradient": "Gradient" },
+  "de": { "prefs.viewport_background_gradient": "Farbverlauf" },
+  "ar": { "prefs.viewport_background_gradient": "تدرّج لوني" },
+  "he": { "prefs.viewport_background_gradient": "מעבר צבעים" },
+  "ja": { "prefs.viewport_background_gradient": "グラデーション" },
+  "vi": { "prefs.viewport_background_gradient": "Chuyển màu" },
+  "zh": { "prefs.viewport_background_gradient": "渐变" }
+}

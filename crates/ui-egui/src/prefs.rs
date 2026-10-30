@@ -251,6 +251,12 @@ impl Prefs {
     pub fn trackpad_pans(&self) -> bool {
         self.nav != TOUCHPAD_NAV && self.trackpad_pan
     }
+
+    /// The 3D view's own background, top and bottom: `viewport_background` alone gives one colour
+    /// (#7688), with `viewport_background_bottom` a gradient (#9230). `None`: the theme's gradient.
+    pub fn viewport_background_colours(&self) -> Option<([u8; 3], [u8; 3])> {
+        self.viewport_background.map(|top| (top, self.viewport_background_bottom.unwrap_or(top)))
+    }
 }
 
 /// The preset with this id (the default for an unknown one).
@@ -1044,6 +1050,10 @@ preference_settings! {
     /// The 3D view's background, one colour for the whole application (#7688), or `None` (the
     /// default) for the theme's gradient.
     viewport_background: Option<[u8; 3]> = None, PAGE_INTERFACE;
+    /// With `viewport_background` as the top colour, the 3D view's background at the bottom: a
+    /// gradient of the user's own (#9230). `None` (the default): `viewport_background` alone, one
+    /// colour; without `viewport_background` it does nothing.
+    viewport_background_bottom: Option<[u8; 3]> = None, PAGE_INTERFACE;
     /// The application bar's logo in the theme's accent instead of the theme's logo colours.
     logo_accent: bool = false, PAGE_INTERFACE;
     /// Imported theme files (`theme_files`), kept here so they also work in the browser.
@@ -4982,6 +4992,7 @@ mod tests {
             ("color_vision", json!("protan"), PAGE_INTERFACE),
             ("viewport_theme", json!("light"), PAGE_INTERFACE),
             ("viewport_background", json!([255, 255, 255]), PAGE_INTERFACE),
+            ("viewport_background_bottom", json!([0, 0, 0]), PAGE_INTERFACE),
             ("view_confirm_corner", json!(true), PAGE_INTERFACE),
             ("status_bar", json!(true), PAGE_INTERFACE),
             ("nav", json!("blender"), PAGE_NAVIGATION),
@@ -5299,6 +5310,44 @@ mod tests {
         for bad in [json!([256, 0, 0]), json!("white"), json!([1, 2])] {
             assert!(h.call("ui.prefs", json!({"viewport_background": bad}))["error"].is_string(), "{bad}");
             assert_eq!(lenient(&json!({"viewport_background": bad})).viewport_background, None, "{bad}");
+        }
+    }
+
+    /// Background → Gradient (#9230): a top and a bottom colour of the user's own fill the 3D view
+    /// as a gradient in either theme, a picture of the view has the same gradient, and it is saved
+    /// with the preferences. The bottom colour needs the top one: without it the view keeps the
+    /// theme's gradient. A bottom value that is not a colour is refused.
+    #[test]
+    fn the_3d_view_takes_a_gradient_of_its_own() {
+        use crate::theme::Tokens;
+        use egui::Color32;
+        use serde_json::json;
+        use solidcraft_engine::render::Rgb;
+        let mut h = crate::scenario::Harness::new();
+        assert_eq!(h.app.preferences.viewport_background_bottom, None);
+        let (top, bottom) = ([250, 200, 120], [20, 40, 90]);
+        for theme in ["light", "dark"] {
+            let out = h.call("ui.prefs", json!({"theme": theme, "viewport_background": top, "viewport_background_bottom": bottom}));
+            assert!(out["error"].is_null(), "{out}");
+            h.frames(2);
+            let (t, want) = (Tokens::get(), (Color32::from_rgb(250, 200, 120), Color32::from_rgb(20, 40, 90)));
+            assert_eq!((t.viewport_top, t.viewport_bottom), want, "{theme}");
+            assert_eq!((Tokens::view().viewport_top, Tokens::view().viewport_bottom), want, "{theme}: the view's side");
+            let scene = crate::control::view_scene(&h.app, solidcraft_engine::view::Guides::default());
+            assert_eq!(scene.background, Some((Rgb(250, 200, 120), Rgb(20, 40, 90))), "{theme}: a picture of the view");
+        }
+
+        let mut other = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        other.load_prefs(&h.app.prefs());
+        assert_eq!(other.preferences.viewport_background_colours(), Some((top, bottom)));
+
+        h.call("ui.prefs", json!({"viewport_background": null}));
+        h.frames(2);
+        let (t, dark) = (Tokens::get(), Tokens::dark());
+        assert_eq!((t.viewport_top, t.viewport_bottom), (dark.viewport_top, dark.viewport_bottom), "no top colour: the theme's gradient");
+
+        for bad in [json!([256, 0, 0]), json!("black"), json!([1, 2])] {
+            assert!(h.call("ui.prefs", json!({"viewport_background_bottom": bad}))["error"].is_string(), "{bad}");
         }
     }
 
