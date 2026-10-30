@@ -22,6 +22,7 @@ use crate::params;
 const MAX_LISTED_EDGES: usize = 64;
 
 const EDGE: &str = "an edge is a point on it [x, y, z], or {point} or {body, index}, with path?";
+const FACE: &str = "a face is a point on it [x, y, z], or {point} or {body, index}, with path?";
 const CORNER: &str = "a corner is a point [x, y, z], or {point} or {edges: [edges]} or {centre: a circle or an arc}, with path?";
 
 /// An edge to measure: what picks it, and the occurrences its body is placed through.
@@ -38,6 +39,13 @@ pub struct CornerParam {
     pub path: Vec<u64>,
 }
 
+/// A face to measure, picked as [`EdgeParam`] picks an edge (its index among the body's faces).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FaceParam {
+    pub pick: EdgePick,
+    pub path: Vec<u64>,
+}
+
 /// An object's keys, each one of `allowed`.
 fn keys<'a>(v: &'a Value, allowed: &[&str], shape: &str) -> Result<&'a Map<String, Value>, String> {
     v.as_object().filter(|o| o.keys().all(|k| allowed.contains(&k.as_str()))).ok_or_else(|| shape.to_string())
@@ -51,21 +59,26 @@ fn path(v: Option<&Value>) -> Result<Vec<u64>, String> {
     list.iter().map(|id| id.as_u64().filter(|id| *id != 0)).collect::<Option<_>>().ok_or_else(shape)
 }
 
-/// An edge as a pick, without its path.
-fn edge_pick(v: &Value) -> Result<EdgePick, String> {
+/// An edge or a face (`what`) as a pick, without its path; `shape` says how one is given.
+fn pick(v: &Value, what: &str, shape: &str) -> Result<EdgePick, String> {
     if let Some(p) = params::vec3(v) {
         return Ok(EdgePick::Point(p));
     }
-    let o = keys(v, &["point", "body", "index", "path"], EDGE)?;
+    let o = keys(v, &["point", "body", "index", "path"], shape)?;
     match (o.get("point"), o.get("body"), o.get("index")) {
-        (Some(p), None, None) => params::vec3(p).map(EdgePick::Point).ok_or_else(|| EDGE.to_string()),
+        (Some(p), None, None) => params::vec3(p).map(EdgePick::Point).ok_or_else(|| shape.to_string()),
         (None, Some(body), Some(index)) => {
-            let body = body.as_str().ok_or("an edge's `body` is its name")?.to_string();
-            let index = index.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or("an edge's `index` is a whole number")?;
+            let body = body.as_str().ok_or_else(|| format!("{what}'s `body` is its name"))?.to_string();
+            let index = index.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| format!("{what}'s `index` is a whole number"))?;
             Ok(EdgePick::Index { body, index })
         }
-        _ => Err(EDGE.to_string()),
+        _ => Err(shape.to_string()),
     }
+}
+
+/// An edge as a pick, without its path.
+fn edge_pick(v: &Value) -> Result<EdgePick, String> {
+    pick(v, "an edge", EDGE)
 }
 
 fn edge_param(v: &Value) -> Result<EdgeParam, String> {
@@ -109,6 +122,14 @@ impl<'de> Deserialize<'de> for CornerParam {
     }
 }
 
+impl<'de> Deserialize<'de> for FaceParam {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v = Value::deserialize(d)?;
+        let path = path(v.get("path")).map_err(D::Error::custom)?;
+        Ok(FaceParam { pick: pick(&v, "a face", FACE).map_err(D::Error::custom)?, path })
+    }
+}
+
 impl JsonSchema for EdgeParam {
     fn schema_name() -> Cow<'static, str> {
         "DrawingDimensionEdge".into()
@@ -116,6 +137,18 @@ impl JsonSchema for EdgeParam {
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
             "description": "An edge: a point on it [x, y, z] in the design's frame, or {point} or {body, index} (its index among the body's edges as the model lists them), with path?: the ids of the occurrences its body is placed through, from the top.",
+            "anyOf": [{"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}, {"type": "object"}]
+        })
+    }
+}
+
+impl JsonSchema for FaceParam {
+    fn schema_name() -> Cow<'static, str> {
+        "DrawingDimensionFace".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "description": "A face: a point on it [x, y, z] in the design's frame, or {point} or {body, index} (its index among the body's faces as the model lists them), with path? as an edge's.",
             "anyOf": [{"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}, {"type": "object"}]
         })
     }
@@ -202,6 +235,12 @@ pub enum KindParam {
         #[serde(default, deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
         #[schemars(with = "bool")]
         diameter: Option<bool>,
+    },
+    /// A whole cylinder's diameter between its two silhouettes, on a view that doesn't look along
+    /// its axis.
+    Cylinder {
+        /// A face on the cylinder.
+        face: FaceParam,
     },
     /// The distances from each point to the next, in order along one line as the view shows them.
     Chain {
@@ -311,6 +350,8 @@ pub enum CandidateResult {
     Edge { body: String, index: usize },
     /// A point where the named edges meet, in the design's frame.
     Corner([f64; 3]),
+    /// A face, as `{body, index}` names it.
+    Face { body: String, index: usize },
 }
 
 /// One of a chain's members as the model has it now.

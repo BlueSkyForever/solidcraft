@@ -121,6 +121,17 @@ pub fn chain(basis: &Plane, points: &[Vec3], direction: LinearDirection) -> Resu
     Ok(Chain { members, overall })
 }
 
+/// The way from a cylinder's axis to its silhouette on one side, on the view through `basis` (the
+/// other side's is the opposite way): square to the axis and to the view's normal. Seen any way but
+/// along its axis, a cylinder shows as a strip as wide as its diameter, so the diameter between
+/// its silhouettes reads true.
+pub fn silhouette_side(basis: &Plane, axis: Vec3) -> Result<Vec3> {
+    validate_plane(basis).map_err(|_| Invalid("a view's basis is finite and orthonormal"))?;
+    let axis = axis.normalized().ok_or(Invalid("the cylinder's axis is zero or not finite"))?;
+    // A view along the axis makes this zero, which `normalized` refuses.
+    basis.normal().cross(axis).normalized().ok_or(Invalid("the cylinder is seen end-on in this view: its rim is a circle"))
+}
+
 /// The angle from the line `from` to `edge` (model points, from its first to its second) on the
 /// view through `basis`, from 0 to π: each line goes the way its caller gives it (from the vertex
 /// outwards), so the other side of the angle reads π minus it. A true reading is the angle

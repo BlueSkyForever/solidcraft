@@ -317,6 +317,28 @@ fn a_chain_saves_its_points_in_order_and_keeps_its_rules() {
     assert!(reading.starts_with("damaged drawing: "), "{reading}");
 }
 
+/// A cylinder dimension saves its face by name, and the face keeps a reference's rules.
+#[test]
+fn a_cylinder_dimension_saves_its_face() {
+    let (mut d, _) = measured();
+    let (view, id) = (d.views[0].id, d.allocate_id(&mut IdSource::seeded(SEED + 1)).unwrap());
+    let face = ModelFace { body: BODY.into(), origin_feature: FEATURE, name: "F4:boss".into(), path: vec![3] };
+    let kind = DimensionKind::Cylinder { face };
+    d.add_dimensions([Arc::new(Dimension { id, view, kind, offset_mm: 6.0, text: TextPlace::Centred, decimals: 1, override_text: None })]);
+    d.validate().unwrap();
+    let cylinder = ids::encode(id);
+    let mut v = file(&d);
+    let saved = json!({"cylinder": {"face": {"body": "Box", "origin_feature": 7, "name": "F4:boss", "path": [3]}}});
+    assert_eq!(dim(&mut v, &cylinder)["kind"], saved);
+    assert_eq!(Drawing::from_json(&v.to_string()).unwrap(), d);
+    let rule = |rule: &str| format!("damaged drawing: dimension {cylinder}: {rule}");
+    let changed = |key: &str, value: Value| refused(&d, |v| dim(v, &cylinder)["kind"]["cylinder"]["face"][key] = value);
+    assert_eq!(changed("name", json!("")), rule("a name in a reference is 1 to 512 bytes, without control characters"));
+    assert_eq!(changed("origin_feature", json!(0)), rule("a reference names the feature that made its body"));
+    assert_eq!(changed("path", json!([0])), rule("an occurrence path is at most 64 occurrences, none of them 0"));
+    assert!(changed("edges", json!(["F4:boss"])).starts_with("damaged drawing: "), "a face has no edges");
+}
+
 /// A direction along a picked line saves as its plane coordinates and reads back as the same
 /// direction: what W19a measures along.
 #[test]

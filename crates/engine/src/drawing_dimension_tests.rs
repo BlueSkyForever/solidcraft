@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcraft_doc::ModelBody;
-use solidcraft_doc::drawing::dimension::{Candidate, Dimension, DimensionKind, ModelEdge, ModelPoint, Resolved, Status, TextPlace};
+use solidcraft_doc::appearance::face_index_at;
+use solidcraft_doc::drawing::dimension::{Candidate, Dimension, DimensionKind, ModelEdge, ModelFace, ModelPoint, Resolved, Status, TextPlace};
 use solidcraft_doc::drawing::view::{View, ViewKind, ViewPlace};
 use solidcraft_doc::drawing::{Drawing, Source, Units};
 use solidcraft_doc::drawing_view::{ViewDirection, ViewOverrides};
 use solidcraft_doc::ids::IdSource;
-use solidcraft_doc::naming::edge_names;
+use solidcraft_doc::naming::{edge_names, face_names};
 use solidcraft_geom::Vec3;
 use solidcraft_geom::drawing_measure::{LinearDirection, Reading};
 use solidcraft_geom::drawing_sheet::{Orientation, PaperSize, Sheet};
@@ -102,6 +103,13 @@ impl Fixture {
         let lines = b.mesh().edges.clone();
         let (_, name) = lines.iter().zip(edge_names(&b)).find(|(line, _)| line.iter().all(|p| (p.dist(c) - radius).abs() < 1e-6)).unwrap();
         ModelEdge { body: "Box".into(), origin_feature: self.feature, name, path: Vec::new() }
+    }
+
+    /// The box's face at `p`, by its name.
+    fn face(&self, p: [f64; 3]) -> ModelFace {
+        let b = self.body();
+        let index = face_index_at(&b, Vec3::new(p[0], p[1], p[2])).unwrap();
+        ModelFace { body: "Box".into(), origin_feature: self.feature, name: face_names(&b)[index].clone(), path: Vec::new() }
     }
 
     /// The box's corner at `p`, by the names of the edges that meet there.
@@ -388,6 +396,37 @@ fn a_holes_centre_is_found_through_its_rim() {
     assert!(matches!(&r.status, Status::Ambiguous(c) if c.len() >= 2) && r.measured.is_none(), "{r:?}");
     run(&mut f.s, "timeline.suppress", json!({"feature": hole, "suppressed": true}));
     let r = f.resolve(across);
+    assert!(matches!(&r.status, Status::Lost(why) if why.contains("no longer exists")), "{r:?}");
+}
+
+/// A boss of radius 5 along X on the box's right face reads Ø10 between its silhouettes in the front
+/// view, exactly, with its silhouettes 10 apart from one end of it to the other. A notch across its
+/// top cuts its face into pieces, all on the one cylinder, so it still reads Ø10 (found through
+/// pieces, so not exactly). The right view looks along its axis, so it can't be measured there;
+/// with the boss suppressed it is lost.
+#[test]
+fn a_cylinders_diameter_is_found_through_all_its_faces() {
+    let mut f = boxed();
+    run(&mut f.s, "solid.cylinder", json!({"radius": 5, "height": 20, "base": [80, 20, 15], "axis": "X", "operation": "join", "targets": ["Box"]}));
+    let boss = f.s.doc.features.last().unwrap().name.clone();
+    let face = f.face([90.0, 22.5, 15.0 + 5.0 * 30f64.to_radians().cos()]);
+    let (front, right) =
+        (f.add(f.front, DimensionKind::Cylinder { face: face.clone() }, None), f.add(f.right, DimensionKind::Cylinder { face }, None));
+    let r = f.resolve(front);
+    assert_reads(&r, 10.0, false);
+    assert!(r.exact, "{r:?}");
+    // Each silhouette from x = 80 to 100, one at z = 20 and the other at z = 10 (either way round).
+    let [a, b, c, d] = r.points.as_slice() else { panic!("{r:?}") };
+    let ends = |p: &Vec3, q: &Vec3| (p.x - 80.0).abs() < 1e-6 && (q.x - 100.0).abs() < 1e-6 && (p.z - q.z).abs() < 1e-9 && (p.y - 20.0).abs() < 1e-9;
+    assert!(ends(a, b) && ends(c, d) && ((a.z - c.z).abs() - 10.0).abs() < 1e-9 && (a.z + c.z - 30.0).abs() < 1e-9, "{:?}", r.points);
+    let r = f.resolve(right);
+    assert!(matches!(&r.status, Status::Unmeasurable(why) if why.contains("end-on")), "{r:?}");
+    run(&mut f.s, "solid.box", json!({"length": 2, "width": 50, "height": 3, "corner": [89, -1, 18], "operation": "cut", "targets": ["Box"]}));
+    let r = f.resolve(front);
+    assert_reads(&r, 10.0, false);
+    assert!(!r.exact, "found through pieces: {r:?}");
+    run(&mut f.s, "timeline.suppress", json!({"feature": boss, "suppressed": true}));
+    let r = f.resolve(front);
     assert!(matches!(&r.status, Status::Lost(why) if why.contains("no longer exists")), "{r:?}");
 }
 

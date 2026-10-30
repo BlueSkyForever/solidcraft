@@ -189,6 +189,27 @@ fn a_chain_reads_each_point_to_the_next_along_one_line() {
     assert!(parts(tilted), "as the view shows them");
 }
 
+/// A cylinder along X seen from the front has its silhouettes above and below its axis, and so does
+/// one leaning back toward Y; in the isometric view every way is square to the axis and the view's
+/// normal. Seen along its axis, a cylinder has no silhouettes.
+#[test]
+fn a_cylinders_silhouettes_are_square_to_its_axis_and_the_view() {
+    let up = silhouette_side(&front(), Vec3::X * 5.0).unwrap();
+    assert!(up.dist(Vec3::Z) < 1e-12 || up.dist(-Vec3::Z) < 1e-12, "{up:?}");
+    let leaning = silhouette_side(&front(), Vec3::new(1.0, 1.0, 0.0)).unwrap();
+    assert!(leaning.cross(Vec3::Z).len() < 1e-12, "{leaning:?}");
+    for axis in [Vec3::X, Vec3::Y, Vec3::Z, Vec3::new(1.0, -2.0, 0.5)] {
+        let side = silhouette_side(&iso(), axis).unwrap();
+        assert!(close(side.len(), 1.0) && side.dot(axis).abs() < 1e-12 && side.dot(iso().normal()).abs() < 1e-12, "{axis:?}");
+    }
+    refused(silhouette_side(&front(), Vec3::Y), "end-on");
+    refused(silhouette_side(&front(), Vec3::new(0.0, -3.0, 0.0)), "end-on");
+    refused(silhouette_side(&front(), Vec3::new(1e-12, 1.0, 0.0)), "end-on");
+    refused(silhouette_side(&front(), Vec3::ZERO), "axis");
+    refused(silhouette_side(&front(), Vec3::new(f64::NAN, 0.0, 1.0)), "axis");
+    refused(silhouette_side(&Plane { x: Vec3::new(2.0, 0.0, 0.0), ..front() }, Vec3::X), "basis");
+}
+
 fn random(state: &mut u64) -> u64 {
     *state ^= *state << 13;
     *state ^= *state >> 7;

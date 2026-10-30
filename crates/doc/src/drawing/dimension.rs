@@ -14,6 +14,8 @@
 //!   on, read exactly from the body.
 //! - **Chain** (W20c): from each of its points to the next along one line, as the view shows them,
 //!   the members adding up to the overall from the first point to the last.
+//! - **Cylinder** (W20b): a whole cylinder's diameter between its two silhouettes, on a view that
+//!   doesn't look along its axis (a face, [`ModelFace`]).
 //!
 //! A reference names its body, the feature that made the body (so a suppressed feature can be told
 //! from a deleted one) and its occurrence path (so a part placed twice has a dimension on each copy).
@@ -35,10 +37,12 @@
 //! [`Document::resolve_dimensions`] finds what a dimension measures again, strictly: an edge by
 //! its name, or the one edge between the faces it names, never the piece nearest an old pick; a
 //! corner where all its named edges meet, never the nearer of two; a centre the centre of its one
-//! named edge, which must be a circle or an arc. What it can't decide it says
-//! ([`Status`]), and it never chooses. [`Document::edge_reference`] and
-//! [`Document::corner_reference`] turn what a command picks (a point, or an edge's index) into
-//! those names, and refuse a pick that doesn't name one thing.
+//! named edge, which must be a circle or an arc; a cylinder the faces its named face is now, all
+//! on one cylinder, with both silhouettes on them. What it can't decide it says
+//! ([`Status`]), and it never chooses. [`Document::edge_reference`],
+//! [`Document::corner_reference`] and [`Document::face_reference`] turn what a command picks (a
+//! point, or an edge's or a face's index) into those names, and refuse a pick that doesn't name
+//! one thing.
 
 use std::collections::BTreeMap;
 use std::f64::consts::PI;
@@ -55,8 +59,14 @@ use crate::config::MAX_REFERENCE_NAME_BYTES;
 use crate::construct::{MAX_VERTEX_EDGES, as_circle, as_line, point_tolerance, shared_ends};
 use crate::display_units::length_number;
 use crate::format::MAX_REAL;
-use crate::name_lookup::{BodyEdges, EdgeMatch};
-use crate::{DocError, Document, MAX_PLACEMENT_DEPTH, Mat, Model, ModelState, Result, apply_point, ids, map_plane, mat_inverse};
+use solidcraft_kernel::{FaceSurface, face_surface};
+
+use crate::appearance::face_index_at;
+use crate::name_lookup::{BodyEdges, EdgeMatch, face_has_name, faces_with_stem};
+use crate::naming::{face_name_exact, face_names};
+use crate::{
+    DocError, Document, MAX_PLACEMENT_DEPTH, Mat, Model, ModelBody, ModelState, Result, apply_point, apply_vector, ids, map_plane, mat_inverse,
+};
 
 /// The most dimensions a drawing may have.
 pub const MAX_DIMENSIONS: usize = 10_000;
@@ -118,6 +128,9 @@ pub enum DimensionKind {
     },
     /// The distances from each point to the next, in order along one line as the view shows them.
     Chain { points: Vec<ModelPoint>, direction: LinearDirection },
+    /// A whole cylinder's diameter between its two silhouettes, on a view that doesn't look along
+    /// its axis: the cylinder a face of it lies on.
+    Cylinder { face: ModelFace },
 }
 
 /// An edge of a body, by its persistent name.
@@ -129,6 +142,20 @@ pub struct ModelEdge {
     pub origin_feature: u64,
     pub name: String,
     /// The occurrences the body is placed through, from the top; empty for the design's own body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<u64>,
+}
+
+/// A face of a body, by its persistent name, as [`ModelEdge`] names an edge.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelFace {
+    pub body: String,
+    /// The feature that made the body.
+    pub origin_feature: u64,
+    /// The face's persistent name.
+    pub name: String,
+    /// As [`ModelEdge::path`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub path: Vec<u64>,
 }
@@ -217,6 +244,10 @@ impl Drawing {
                 check_direction(*direction, Reading::Projected)?;
                 let instead = || "a chain shows its members' numbers, never a text instead".into();
                 require(d.override_text.is_none(), instead)?;
+            }
+            DimensionKind::Cylinder { face } => {
+                check_body(&face.body, face.origin_feature, &face.path)?;
+                check_reference_name(&face.name)?;
             }
         }
         let off_paper = || format!("its offset and its text's place are at most {MAX_SIDE_MM} mm on paper");
@@ -341,15 +372,18 @@ pub enum Candidate {
     Edge { body: String, index: usize },
     /// A point where the named edges meet, in the design's frame.
     Corner(Vec3),
+    /// A face of the body, by its index (as a `{body, index}` face pick names it).
+    Face { body: String, index: usize },
 }
 
-/// How a command names an edge to measure, before it is saved by name
-/// ([`Document::edge_reference`]).
+/// How a command names an edge (or a face) to measure, before it is saved by name
+/// ([`Document::edge_reference`], [`Document::face_reference`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum EdgePick {
     /// A point on it, in the design's frame.
     Point(Vec3),
-    /// Its index among its body's edges as the model lists them: a [`Candidate::Edge`]'s.
+    /// Its index among its body's edges (or faces) as the model lists them: a [`Candidate::Edge`]'s
+    /// (or a [`Candidate::Face`]'s).
     Index { body: String, index: usize },
 }
 
@@ -373,6 +407,17 @@ impl Document {
         let (body, edge) = picker.edge(pick)?;
         let (body, origin_feature, mut names) = picker.names(body, &[edge])?;
         Ok(ModelEdge { body, origin_feature, name: names.remove(0), path: path.to_vec() })
+    }
+
+    /// The face `pick` names, by its persistent name, as [`Document::edge_reference`] names an edge:
+    /// a point must be on one face of one body (to the body's pick tolerance).
+    pub fn face_reference(&self, model: &Model, pick: &EdgePick, path: &[u64]) -> Result<ModelFace> {
+        let mut picker = Picker::new(self, model, path);
+        let (body, face) = picker.face(pick)?;
+        let b = picker.state.bodies.get(body).ok_or_else(|| DocError::Invalid("the body picked no longer exists".into()))?;
+        let name = face_names(b).get(face).filter(|n| !n.is_empty()).cloned();
+        let name = name.ok_or_else(|| DocError::Invalid(format!("face {face} of `{}` has no name", b.name)))?;
+        Ok(ModelFace { body: b.name.clone(), origin_feature: b.feature, name, path: path.to_vec() })
     }
 
     /// The point `pick` names, as [`Document::edge_reference`] names an edge: a corner by the edges
@@ -433,6 +478,16 @@ pub(super) struct Lookup<'a> {
     state: Arc<ModelState>,
     /// Each named body's edge names, by its index in `state`.
     named: BTreeMap<usize, BodyEdges>,
+    /// Each body a cylinder dimension names: the cylinder each face lies on, by face.
+    cylinders: BTreeMap<usize, Vec<Option<Cylinder>>>,
+}
+
+/// A cylinder: a point on its axis, its unit axis and its radius, in its body's own frame.
+#[derive(Clone, Copy, Debug)]
+struct Cylinder {
+    origin: Vec3,
+    axis: Vec3,
+    radius: f64,
 }
 
 /// What a dimension measures, found and measured: a chain's overall, and its members.
@@ -456,7 +511,7 @@ pub(super) struct Edges {
 
 impl<'a> Lookup<'a> {
     pub(super) fn new(doc: &'a Document, model: &'a Model) -> Lookup<'a> {
-        Lookup { doc, model, state: model.state(), named: BTreeMap::new() }
+        Lookup { doc, model, state: model.state(), named: BTreeMap::new(), cylinders: BTreeMap::new() }
     }
 
     fn resolve(&mut self, d: &Dimension, basis: &Plane, units: &str) -> Resolved {
@@ -473,6 +528,7 @@ impl<'a> Lookup<'a> {
                 Some(format!("{symbol}{}", length(m)))
             }
             DimensionKind::Chain { .. } => None,
+            DimensionKind::Cylinder { .. } => Some(format!("{DIAMETER_SIGN}{}", length(m))),
             _ => Some(length(m)),
         };
         let (members, points, exact) = found.map_or_else(Default::default, |f| (f.members, f.points, f.exact));
@@ -533,6 +589,7 @@ impl<'a> Lookup<'a> {
                 let chain = drawing_measure::chain(basis, &points, *direction).map_err(unmeasurable)?;
                 Ok(Found { measured: chain.overall, members: chain.members, points, exact })
             }
+            DimensionKind::Cylinder { face } => self.cylinder(face, basis),
         }
     }
 
@@ -646,6 +703,91 @@ impl<'a> Lookup<'a> {
         let (centre, ..) = round.ok_or_else(|| Status::Unmeasurable(format!("edge `{name}` isn't a circle or an arc")))?;
         Ok((centre, found.exact))
     }
+
+    /// The whole cylinder `face` lies on (or the pieces it was cut into, all on one cylinder) and
+    /// its diameter between its two silhouettes on the view through `basis`: both must lie on the
+    /// body's faces on that cylinder, so a fillet's quarter round is refused. Its points are the
+    /// silhouettes' ends, each from the faces' one end along the axis to the other.
+    fn cylinder(&mut self, face: &ModelFace, basis: &Plane) -> std::result::Result<Found, Status> {
+        let (i, frame) = self.body(&face.body, face.origin_feature, &face.path)?;
+        let state = Arc::clone(&self.state);
+        let b = state.bodies.get(i).ok_or_else(|| Status::Lost("its body no longer exists".into()))?;
+        let named: Vec<usize> = (0..b.body.face_count()).filter(|f| face_has_name(b, *f, &face.name)).collect();
+        let (found, exact) = match named.as_slice() {
+            [f] => (named.clone(), face_name_exact(b, *f)),
+            [] => (faces_with_stem(b, &face.name), false),
+            _ => (named.clone(), false),
+        };
+        let candidates = || found.iter().take(MAX_CANDIDATES).map(|f| Candidate::Face { body: face.body.clone(), index: *f }).collect();
+        let cylinders = self.cylinders.entry(i).or_insert_with(|| cylinders_of(b));
+        let on = |f: &usize| cylinders.get(*f).copied().flatten();
+        let first = match found.first() {
+            None => return Err(Status::Lost(format!("face `{}` no longer exists", face.name))),
+            Some(f) => on(f).ok_or_else(|| Status::Unmeasurable(format!("face `{}` isn't a cylinder", face.name)))?,
+        };
+        let tol = cylinder_tolerance(b);
+        if !found.iter().all(|f| on(f).is_some_and(|c| same_cylinder(&first, &c, tol))) {
+            return Err(Status::Ambiguous(candidates()));
+        }
+        let faces: Vec<usize> = (0..cylinders.len()).filter(|f| on(f).is_some_and(|c| same_cylinder(&first, &c, tol))).collect();
+        // In the design's frame.
+        let origin = apply_point(&frame, first.origin);
+        let axis = apply_vector(&frame, first.axis).normalized().ok_or_else(|| Status::Lost("its occurrence flattens it".into()))?;
+        let side = drawing_measure::silhouette_side(basis, axis).map_err(|e| Status::Unmeasurable(e.0.to_string()))?;
+        let corners = face_corners(b, &frame, &faces);
+        let slack = tol / first.radius.max(tol);
+        let covered =
+            |side: Vec3| corners.iter().any(|t| straddles(t.map(|p| (p - origin).dot(axis.cross(side)).atan2((p - origin).dot(side))), slack));
+        if !(covered(side) && covered(-side)) {
+            return Err(Status::Unmeasurable(format!(
+                "face `{}` isn't a whole cylinder in this view: one of its silhouettes isn't on it (give an arc's radius)",
+                face.name
+            )));
+        }
+        let along = |p: Vec3| (p - origin).dot(axis);
+        let (low, high) = corners.iter().flatten().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| (lo.min(along(*p)), hi.max(along(*p))));
+        let r = side * first.radius;
+        let points = vec![origin + axis * low + r, origin + axis * high + r, origin + axis * low - r, origin + axis * high - r];
+        Ok(Found { measured: Measured { value: 2.0 * first.radius, foreshortened: false }, members: Vec::new(), points, exact })
+    }
+}
+
+/// The cylinder each face of `b` lies on, by face; `None` for a face of another surface.
+fn cylinders_of(b: &ModelBody) -> Vec<Option<Cylinder>> {
+    (0..b.body.face_count())
+        .map(|f| match face_surface(&b.body, f) {
+            Some(FaceSurface::Cylinder { origin, axis, radius }) => Some(Cylinder { origin, axis: Vec3::from(axis), radius }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// How near two cylinders of `b` must be to be one: the kernel's own tolerance for two faces on a
+/// common cylinder.
+fn cylinder_tolerance(b: &ModelBody) -> f64 {
+    (b.body.size() * 1e-7).max(1e-9) * 10.0
+}
+
+/// Whether two cylinders are one: parallel axes, on one line, and one radius, to `tol` (the
+/// kernel's own condition for faces on a common cylinder).
+fn same_cylinder(a: &Cylinder, b: &Cylinder, tol: f64) -> bool {
+    let off = b.origin - a.origin;
+    a.axis.dot(b.axis).abs() > 1.0 - 1e-9 && (a.radius - b.radius).abs() < tol && (off - a.axis * off.dot(a.axis)).len() < tol
+}
+
+/// The corners of the triangles of `faces` of `b`'s mesh, in the design's frame through `frame`.
+fn face_corners(b: &ModelBody, frame: &Mat, faces: &[usize]) -> Vec<[Vec3; 3]> {
+    let mesh = b.mesh();
+    let on = mesh.triangles.iter().zip(&mesh.tri_face).filter(|(_, f)| faces.contains(&(**f as usize)));
+    on.filter_map(|(t, _)| mesh.tri(t)).map(|corners| corners.map(|p| apply_point(frame, p))).collect()
+}
+
+/// Whether a triangle whose corners lie at `angles` round a cylinder's axis (from the way a
+/// silhouette is, each from −π to π) lies across the silhouette: its corners round it, to `slack`,
+/// and less than half a turn apart (so not round the far side).
+fn straddles(angles: [f64; 3], slack: f64) -> bool {
+    let (low, high) = angles.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), a| (lo.min(*a), hi.max(*a)));
+    low <= slack && high >= -slack && high - low < PI
 }
 
 /// One command's picks on the bodies placed through one occurrence path. Each body's edges are
@@ -680,13 +822,7 @@ impl<'a> Picker<'a> {
     fn edge(&mut self, pick: &EdgePick) -> Result<(usize, usize)> {
         let on: Vec<(usize, usize)> = match pick {
             EdgePick::Index { body, index } => {
-                let named: Vec<usize> = (0..self.state.bodies.len()).filter(|i| self.state.bodies.get(*i).is_some_and(|b| b.name == *body)).collect();
-                let placed: Vec<usize> = named.into_iter().filter(|i| self.placed(*i).is_some()).collect();
-                let b = match placed.as_slice() {
-                    [b] => *b,
-                    [] => return Err(DocError::Invalid(format!("no body `{body}` with edges is placed here"))),
-                    _ => return Err(DocError::Invalid(format!("more than one body is called `{body}`: give a point on the edge"))),
-                };
+                let b = self.named(body, "edge")?;
                 let count = self.placed(b).map_or(0, Vec::len);
                 require(*index < count, || format!("body `{body}` has no edge {index}"))?;
                 vec![(b, *index)]
@@ -707,6 +843,44 @@ impl<'a> Picker<'a> {
             several => {
                 Err(DocError::Invalid(format!("{} is on {} edges: give a point inside one edge, or its body and index", at(pick), several.len())))
             }
+        }
+    }
+
+    /// The one body called `body` that the path places here, for a pick of its `what` (edge or
+    /// face) by index.
+    fn named(&mut self, body: &str, what: &str) -> Result<usize> {
+        let named: Vec<usize> = (0..self.state.bodies.len()).filter(|i| self.state.bodies.get(*i).is_some_and(|b| b.name == *body)).collect();
+        let placed: Vec<usize> = named.into_iter().filter(|i| self.placed(*i).is_some()).collect();
+        match placed.as_slice() {
+            [b] => Ok(*b),
+            [] => Err(DocError::Invalid(format!("no body `{body}` with edges is placed here"))),
+            _ => Err(DocError::Invalid(format!("more than one body is called `{body}`: give a point on the {what}"))),
+        }
+    }
+
+    /// The face `pick` names: its body's index and its own. A point picks the face it lies on, to
+    /// its body's pick tolerance ([`face_index_at`]), on whichever placed body has one there.
+    fn face(&mut self, pick: &EdgePick) -> Result<(usize, usize)> {
+        let on: Vec<(usize, usize)> = match pick {
+            EdgePick::Index { body, index } => {
+                let b = self.named(body, "face")?;
+                let count = self.state.bodies.get(b).map_or(0, |b| b.body.face_count());
+                require(*index < count, || format!("body `{body}` has no face {index}"))?;
+                vec![(b, *index)]
+            }
+            EdgePick::Point(p) => {
+                let mut on = Vec::new();
+                for (i, b) in self.state.bodies.iter().enumerate().filter(|(_, b)| !b.body.is_mesh()) {
+                    let back = self.doc.body_frame_at(b, self.path).ok().and_then(|frame| mat_inverse(&frame));
+                    on.extend(back.and_then(|back| face_index_at(b, apply_point(&back, *p))).map(|f| (i, f)));
+                }
+                on
+            }
+        };
+        match on.as_slice() {
+            [one] => Ok(*one),
+            [] => Err(DocError::Invalid(format!("no face at {}", at(pick)))),
+            several => Err(DocError::Invalid(format!("{} is on {} faces: give its body and index", at(pick), several.len()))),
         }
     }
 

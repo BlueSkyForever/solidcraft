@@ -301,6 +301,63 @@ fn a_chain_reads_holes_at_10_30_and_60_as_10_20_and_30() {
     assert_eq!(s.drawing("test").unwrap().to_json().unwrap(), before);
 }
 
+/// A cylinder's diameter is read between its silhouettes: a boss of radius 5 along X on the box's
+/// right face, seen side on from the front, reads Ø10.00, picked by a point on it or by its body
+/// and index, and saved by its face's name; it takes no settings. A flat face, a fillet's quarter
+/// round (one of its silhouettes isn't on it) and a hole the view sees end-on are refused, with
+/// the drawing unchanged.
+#[test]
+fn a_cylinders_diameter_is_read_between_its_silhouettes() {
+    let (mut s, view) = front_view();
+    let drawing = s.drawing("test").unwrap().id;
+    run(&mut s, "drawing.close", json!({}));
+    run(&mut s, "solid.cylinder", json!({"radius": 5, "height": 20, "base": [80, 20, 15], "axis": "X", "operation": "join", "targets": ["Box"]}));
+    run(&mut s, "solid.fillet", json!({"edges": [[40, 0, 30]], "radius": 4, "body": "Box"}));
+    run(&mut s, "solid.cylinder", json!({"radius": 3, "height": 42, "base": [20, -1, 15], "axis": "Y", "operation": "cut", "targets": ["Box"]}));
+    run(&mut s, "drawing.open", json!({"drawing": ids::encode(drawing)}));
+    // 30° round from the boss's top, away from where its two half faces meet.
+    let on_boss = [90.0, 22.5, 15.0 + 5.0 * 30f64.to_radians().cos()];
+    let boss = add(&mut s, view, json!({"cylinder": {"face": on_boss}}));
+    reads(&boss, 10.0, "Ø10.00");
+    assert_eq!((boss["exact"].clone(), boss["foreshortened"].clone()), (json!(true), json!(false)), "{boss}");
+    let saved = boss["record"]["kind"]["cylinder"]["face"].clone();
+    assert!(saved["body"] == "Box" && saved["name"].as_str().is_some_and(|n| !n.is_empty()), "{saved}");
+    let index = {
+        let state = s.model.state();
+        solidcraft_doc::appearance::face_index_at(state.body("Box").unwrap(), Vec3::from(on_boss)).unwrap()
+    };
+    let by_index = add(&mut s, view, json!({"cylinder": {"face": {"body": "Box", "index": index}}}));
+    assert_eq!(by_index["record"]["kind"], boss["record"]["kind"]);
+    let id = boss["dimension"].clone();
+    let before = s.drawing("test").unwrap().to_json().unwrap();
+    for (set, why) in [
+        (json!({"direction": "horizontal"}), "a cylinder's diameter has no direction, reading or side"),
+        (json!({"reading": "true"}), "a cylinder's diameter has no direction, reading or side"),
+        (json!({"diameter": false}), "`diameter` is a radial dimension's"),
+    ] {
+        let p = json!({"dimension": id, "set": set});
+        let e = s.execute(EDIT, &p).err().map(|e| e.to_string()).unwrap_or_else(|| panic!("accepted: {p}"));
+        assert!(e.contains(why), "{p}: {e}");
+    }
+    let v = ids::encode(view);
+    let cylinder = |face: Value| json!({"view": v, "kind": {"cylinder": {"face": face}}});
+    let on_fillet = [40.0, 4.0 - 4.0 * 45f64.to_radians().cos(), 26.0 + 4.0 * 45f64.to_radians().sin()];
+    let cases = [
+        (cylinder(json!([40, 0, 10])), "isn't a cylinder"),
+        (cylinder(json!(on_fillet)), "isn't a whole cylinder in this view"),
+        (cylinder(json!([23, 20, 15])), "the cylinder is seen end-on in this view"),
+        (cylinder(json!([200, 200, 200])), "no face at [200, 200, 200]"),
+        (cylinder(json!({"body": "Box", "index": 9999})), "body `Box` has no face 9999"),
+        (cylinder(json!({"body": "Box"})), "a face is a point on it"),
+        (cylinder(json!({"body": 7, "index": 0})), "a face's `body` is its name"),
+    ];
+    for (p, why) in cases {
+        let e = refused(&mut s, p.clone());
+        assert!(e.contains(why), "{p}: {e}");
+    }
+    assert_eq!(s.drawing("test").unwrap().to_json().unwrap(), before);
+}
+
 /// A dimension whose edge is filleted away has no value, and gives the one it last read this
 /// session as its last good value.
 #[test]
@@ -422,6 +479,7 @@ fn hostile_dimension_params_never_panic() {
             "direction": "horizontal"}}}),
         ),
         (EDIT, json!({"dimension": chain, "set": {"direction": {"along": [1, 1]}, "decimals": 3}})),
+        (ADD, json!({"view": v, "kind": {"cylinder": {"face": {"body": "Box", "index": 0, "path": [1]}}}})),
         (
             EDIT,
             json!({"dimension": id, "set": {"offset_mm": 5, "text": "centred", "decimals": 1, "override_text": null, "direction": "vertical",
