@@ -59,6 +59,7 @@ pub mod construct;
 pub mod edit;
 pub mod features;
 pub mod inspect;
+pub mod plugin;
 pub mod render;
 pub mod render_lights;
 pub mod render_ui;
