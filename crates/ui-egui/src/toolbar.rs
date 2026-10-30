@@ -5300,7 +5300,7 @@ mod persistent_ribbon_tests {
             let ctx = h.ctx.clone();
             let mut expected = Vec::new();
             let output = ctx.run_ui(
-                egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 240.0))), focused: true, ..Default::default() },
+                egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 240.0))), focused: true, ..Default::default() },
                 |ui| {
                     expected.clear(); // Context layout passes never accumulate stale paint expectations.
                     // Leave visible space above the scroll viewport, where a broadened clip leaks.
