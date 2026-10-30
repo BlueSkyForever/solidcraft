@@ -39,6 +39,23 @@ pub const INSTANCE_SIZE: usize = 52;
 #[repr(transparent)]
 pub struct PaletteIndex(pub u32);
 
+/// The palette word's top bit, past every index ([`MAX_PALETTE`]): the triangle is an open
+/// sheet's (a surface body's), which has no inside, so a section's body count leaves it out
+/// ([`Cut::count`]).
+pub const OPEN_SHEET: u32 = 1 << 31;
+
+impl PaletteIndex {
+    /// This colour on triangles of an open sheet when `open` ([`OPEN_SHEET`]).
+    pub fn sheet(self, open: bool) -> PaletteIndex {
+        if open { PaletteIndex(self.0 | OPEN_SHEET) } else { self }
+    }
+
+    /// The entry, without the [`OPEN_SHEET`] bit.
+    fn entry(self) -> usize {
+        (self.0 & !OPEN_SHEET) as usize
+    }
+}
+
 /// How many palette entries fit on one texel row: the shader reads `x = i & 2047`,
 /// `y = i >> 11`. A power of two keeps the lookup a shift and a mask.
 pub const PALETTE_WIDTH: u32 = 2048;
@@ -83,13 +100,13 @@ impl Palette {
 
     /// The colour at `i`, if the palette has it.
     pub fn get(&self, i: PaletteIndex) -> Option<[u8; 4]> {
-        self.entries.get(i.0 as usize).copied()
+        self.entries.get(i.entry()).copied()
     }
 
     /// Set an entry's colour; `false` when the index is out of range. Stable entries are updated
     /// in place (what appearance and theme edits do); interned entries keep their lookup current.
     pub fn set(&mut self, i: PaletteIndex, rgba: [u8; 4]) -> bool {
-        let at = i.0 as usize;
+        let at = i.entry();
         let ephemeral = at >= self.stable_len;
         let Some(slot) = self.entries.get_mut(at) else { return false };
         if ephemeral {
@@ -97,7 +114,7 @@ impl Palette {
         }
         *slot = rgba;
         if ephemeral {
-            self.lookup.insert(rgba, i.0);
+            self.lookup.insert(rgba, i.0 & !OPEN_SHEET);
         }
         true
     }
@@ -1974,9 +1991,10 @@ impl Batches {
 /// The section's pipelines (see `Renderer::tri_cut`), in the order they draw. The stencil's
 /// low bits ([`CUT_COUNT`]) count bodies, its top bit ([`CUT_CAP`]) marks the cap.
 struct Cut {
-    /// Every face past where its view ray comes into what the section keeps: back faces count
-    /// up and front faces down, leaving how many bodies that point (the cap) is inside. No colour
-    /// or depth.
+    /// Every closed body's face past where its view ray comes into what the section keeps: back
+    /// faces count up and front faces down, leaving how many bodies that point (the cap) is
+    /// inside. An open sheet's ([`OPEN_SHEET`]) would leave a count where no material is. No
+    /// colour or depth. Drawn, with `hole`, only for two planes or more.
     count: wgpu::RenderPipeline,
     /// Draws the faces and marks the stencil by their true depth: the cap bit where a back face
     /// (the cap) is the visible surface. Unpushed: `FACE_BIAS`'s slope part would let a front
@@ -1984,8 +2002,8 @@ struct Cut {
     /// skip it (#6328).
     mark: wgpu::RenderPipeline,
     /// The cap where its body reaches past another plane before the far wall, so no kept back
-    /// face shows it: the nearest hidden back face behind it, where the count says the cap is
-    /// inside a body, in the cap colour, marking the cap bit.
+    /// face shows it: the nearest hidden back face of a closed body behind it, where the count
+    /// says the cap is inside a body, in the cap colour, marking the cap bit.
     hole: wgpu::RenderPipeline,
     /// The faces' depth again, pushed back by `FACE_BIAS` as unsectioned faces are (after
     /// `Renderer::section_reset`), so their edges draw over them (#1434). No colour, no stencil.
@@ -2365,6 +2383,15 @@ impl TriSource {
         }
     }
 
+    /// [`TriSource::entry`] leaving out open sheets' triangles ([`OPEN_SHEET`]).
+    fn closed_entry(self) -> &'static str {
+        match self {
+            TriSource::Instanced => "vs_tri_inst_closed",
+            TriSource::InstancedFlat => "vs_tri_inst_flat_closed",
+            TriSource::Built | TriSource::Planned => "vs_tri_closed",
+        }
+    }
+
     /// The fragment shader entry point standing for `fs` (written for [`TriSource::Built`]).
     fn fragment(self, fs: &str) -> String {
         match self {
@@ -2679,37 +2706,41 @@ impl Renderer {
         let evaluated = [Some(planned_layout()), Some(color_layout())];
         let placed = [Some(shared_layout()), Some(instance_layout())];
         // `colour`: whether the pipeline writes colour (the cap's depth pass writes none).
-        let solid_writes = |label: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, source: TriSource, colour: bool| {
-            let fs = source.fragment(fs);
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&solid_layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some(source.entry()),
-                    buffers: match source {
-                        TriSource::Built => &built[..],
-                        TriSource::Planned => &evaluated[..],
-                        TriSource::Instanced | TriSource::InstancedFlat => &placed[..],
+        let tri_pipeline =
+            |label: &str, vs: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, source: TriSource, colour: bool| {
+                let fs = source.fragment(fs);
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&solid_layout),
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: Some(vs),
+                        buffers: match source {
+                            TriSource::Built => &built[..],
+                            TriSource::Planned => &evaluated[..],
+                            TriSource::Instanced | TriSource::InstancedFlat => &placed[..],
+                        },
+                        compilation_options: Default::default(),
                     },
-                    compilation_options: Default::default(),
-                },
-                primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: cull, ..Default::default() },
-                depth_stencil: ds,
-                multisample: wgpu::MultisampleState { count: t.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some(&fs),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: t.format,
-                        blend: None,
-                        write_mask: if colour { wgpu::ColorWrites::ALL } else { wgpu::ColorWrites::empty() },
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+                    primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: cull, ..Default::default() },
+                    depth_stencil: ds,
+                    multisample: wgpu::MultisampleState { count: t.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some(&fs),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: t.format,
+                            blend: None,
+                            write_mask: if colour { wgpu::ColorWrites::ALL } else { wgpu::ColorWrites::empty() },
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+        let solid_writes = |label: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, source: TriSource, colour: bool| {
+            tri_pipeline(label, source.entry(), fs, cull, ds, source, colour)
         };
         let solid = |label: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, source: TriSource| {
             solid_writes(label, fs, cull, ds, source, true)
@@ -2754,8 +2785,8 @@ impl Renderer {
         let cap = |source: TriSource| {
             cut_states.as_ref().map(|[count, _, hole, cap]| {
                 (
-                    solid_writes("sc_tris_count", "fs_section_count", None, Some(count.clone()), source, false),
-                    solid("sc_tris_hole", "fs_section_hole", Some(wgpu::Face::Front), Some(hole.clone()), source),
+                    tri_pipeline("sc_tris_count", source.closed_entry(), "fs_section_count", None, Some(count.clone()), source, false),
+                    tri_pipeline("sc_tris_hole", source.closed_entry(), "fs_section_hole", Some(wgpu::Face::Front), Some(hole.clone()), source, true),
                     solid_writes("sc_tris_cap", "fs_solid_cut", Some(wgpu::Face::Front), Some(cap.clone()), source, false),
                 )
             })
