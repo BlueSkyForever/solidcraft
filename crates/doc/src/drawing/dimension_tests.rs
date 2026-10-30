@@ -18,7 +18,7 @@ const BODY: &str = "Box";
 const FEATURE: u64 = 7;
 
 fn corner(edges: &[&str]) -> ModelPoint {
-    ModelPoint { body: BODY.into(), origin_feature: FEATURE, edges: edges.iter().map(|e| e.to_string()).collect(), path: Vec::new() }
+    ModelPoint { body: BODY.into(), origin_feature: FEATURE, edges: edges.iter().map(|e| e.to_string()).collect(), centre: false, path: Vec::new() }
 }
 
 fn edge(name: &str) -> ModelEdge {
@@ -159,6 +159,18 @@ fn the_dimensions_rules_are_kept_on_reading() {
     };
     let meet = rule(&linear_id, "a corner is where 2 to 16 named edges meet");
     assert_eq!([edges(0), edges(1), edges(2), edges(16), edges(17)], [meet.clone(), meet.clone(), "read".into(), "read".into(), meet]);
+    // A centre is of one named circle or arc, and saves as `centre`.
+    let centred = |n: usize| {
+        let mut v = file(&d);
+        let b = &mut dim(&mut v, &linear_id)["kind"]["linear"]["b"];
+        b["centre"] = json!(true);
+        b["edges"] = json!((0..n).map(|i| format!("F3:e{i}")).collect::<Vec<_>>());
+        let read = Drawing::from_json(&v.to_string()).map_err(|e| e.to_string())?;
+        Ok::<_, String>(dim(&mut file(&read), &linear_id)["kind"]["linear"]["b"].clone())
+    };
+    let one = Err(rule(&linear_id, "a centre is of one named circle or arc"));
+    assert_eq!([centred(0), centred(2)], [one.clone(), one]);
+    assert_eq!(centred(1), Ok(json!({"body": "Box", "origin_feature": 7, "edges": ["F3:e0"], "centre": true})));
     // The feature that made the body, and the occurrence path.
     let feature = rule(&length_id, "a reference names the feature that made its body");
     assert_eq!(refused(&d, |v| dim(v, &length_id)["kind"]["length"]["edge"]["origin_feature"] = json!(0)), feature);
@@ -206,7 +218,7 @@ fn the_dimensions_rules_are_kept_on_reading() {
         |v, id| dim(v, id)["kind"]["linear"]["tolerance"] = json!(0.1),
         |v, id| dim(v, id)["kind"]["linear"]["a"]["point"] = json!([0.0, 0.0, 0.0]),
         |v, id| dim(v, id)["text"] = json!({"at": [1.0, 2.0], "angle": 3.0}),
-        |v, id| dim(v, id)["kind"] = json!({"chain": {}}),
+        |v, id| dim(v, id)["kind"] = json!({"baseline": {}}),
     ];
     for (i, edit) in unknown.into_iter().enumerate() {
         assert!(refused(&d, |v| edit(v, &linear_id)).starts_with("damaged drawing: "), "{i}");
@@ -260,6 +272,101 @@ fn a_radial_dimension_saves_its_edge_and_whether_it_is_a_diameter() {
     let names = format!("damaged drawing: dimension {radial_id}: a name in a reference is 1 to 512 bytes, without control characters");
     assert_eq!(refused(&d, |v| dim(v, &radial_id)["kind"]["radial"]["edge"]["name"] = json!("")), names);
     assert!(refused(&d, |v| dim(v, &radial_id)["kind"]["radial"]["reading"] = json!("true")).starts_with("damaged drawing: "));
+}
+
+/// A chain saves its points in order and its direction, and keeps its rules on reading: 3 to
+/// [`MAX_CHAIN_POINTS`] points, each with a point's rules, a direction to measure along that isn't
+/// zero, no reading (it reads projected) and no text instead of its members' numbers.
+#[test]
+fn a_chain_saves_its_points_in_order_and_keeps_its_rules() {
+    let (mut d, _) = measured();
+    let (view, id) = (d.views[0].id, d.allocate_id(&mut IdSource::seeded(SEED + 1)).unwrap());
+    let hole = |n: u64| {
+        let rim = format!("F{n}:hole|F1:front");
+        ModelPoint { centre: true, ..corner(&[rim.as_str()]) }
+    };
+    let points = vec![corner(&["F1:front|F1:bottom", "F1:front|F1:left"]), hole(3), hole(4), hole(5)];
+    let kind = DimensionKind::Chain { points, direction: LinearDirection::Horizontal };
+    d.add_dimensions([Arc::new(Dimension { id, view, kind, offset_mm: 8.0, text: TextPlace::Centred, decimals: 1, override_text: None })]);
+    d.validate().unwrap();
+    let chain_id = ids::encode(id);
+    let mut v = file(&d);
+    let first = json!({"body": "Box", "origin_feature": 7, "edges": ["F1:front|F1:bottom", "F1:front|F1:left"]});
+    let centre = |n: u64| json!({"body": "Box", "origin_feature": 7, "edges": [format!("F{n}:hole|F1:front")], "centre": true});
+    let saved = json!({"chain": {"points": [first, centre(3), centre(4), centre(5)], "direction": "horizontal"}});
+    assert_eq!(dim(&mut v, &chain_id)["kind"], saved);
+    assert_eq!(Drawing::from_json(&v.to_string()).unwrap(), d);
+    let rule = |rule: &str| format!("damaged drawing: dimension {chain_id}: {rule}");
+    let count = |n: usize| {
+        refused(&d, |v| {
+            let points = &mut dim(v, &chain_id)["kind"]["chain"]["points"];
+            let one = points[1].clone();
+            *points = json!(vec![one; n]);
+        })
+    };
+    let three_to = rule(&format!("a chain has 3 to {MAX_CHAIN_POINTS} points"));
+    let counts = [count(0), count(2), count(3), count(MAX_CHAIN_POINTS), count(MAX_CHAIN_POINTS + 1)];
+    assert_eq!(counts, [three_to.clone(), three_to.clone(), "read".into(), "read".into(), three_to]);
+    let two_edges = refused(&d, |v| dim(v, &chain_id)["kind"]["chain"]["points"][2]["edges"] = json!(["F3:a", "F3:b"]));
+    assert_eq!(two_edges, rule("a centre is of one named circle or arc"));
+    let zero = refused(&d, |v| dim(v, &chain_id)["kind"]["chain"]["direction"] = json!({"along": [0.0, 0.0]}));
+    assert_eq!(zero, rule("the direction to measure along is zero or not finite"));
+    let instead = refused(&d, |v| dim(v, &chain_id)["override_text"] = json!("60"));
+    assert_eq!(instead, rule("a chain shows its members' numbers, never a text instead"));
+    let reading = refused(&d, |v| dim(v, &chain_id)["kind"]["chain"]["reading"] = json!("projected"));
+    assert!(reading.starts_with("damaged drawing: "), "{reading}");
+}
+
+/// A cylinder dimension saves its face by name, and the face keeps a reference's rules.
+#[test]
+fn a_cylinder_dimension_saves_its_face() {
+    let (mut d, _) = measured();
+    let (view, id) = (d.views[0].id, d.allocate_id(&mut IdSource::seeded(SEED + 1)).unwrap());
+    let face = ModelFace { body: BODY.into(), origin_feature: FEATURE, name: "F4:boss".into(), path: vec![3] };
+    let kind = DimensionKind::Cylinder { face };
+    d.add_dimensions([Arc::new(Dimension { id, view, kind, offset_mm: 6.0, text: TextPlace::Centred, decimals: 1, override_text: None })]);
+    d.validate().unwrap();
+    let cylinder = ids::encode(id);
+    let mut v = file(&d);
+    let saved = json!({"cylinder": {"face": {"body": "Box", "origin_feature": 7, "name": "F4:boss", "path": [3]}}});
+    assert_eq!(dim(&mut v, &cylinder)["kind"], saved);
+    assert_eq!(Drawing::from_json(&v.to_string()).unwrap(), d);
+    let rule = |rule: &str| format!("damaged drawing: dimension {cylinder}: {rule}");
+    let changed = |key: &str, value: Value| refused(&d, |v| dim(v, &cylinder)["kind"]["cylinder"]["face"][key] = value);
+    assert_eq!(changed("name", json!("")), rule("a name in a reference is 1 to 512 bytes, without control characters"));
+    assert_eq!(changed("origin_feature", json!(0)), rule("a reference names the feature that made its body"));
+    assert_eq!(changed("path", json!([0])), rule("an occurrence path is at most 64 occurrences, none of them 0"));
+    assert!(changed("edges", json!(["F4:boss"])).starts_with("damaged drawing: "), "a face has no edges");
+}
+
+/// A dimension between two cylinders' silhouettes saves each one's face and side, and its
+/// direction; each face keeps a reference's rules, a side is near or far, and it reads as the view
+/// shows it (no `reading`).
+#[test]
+fn a_silhouettes_dimension_saves_each_face_and_side() {
+    let (mut d, _) = measured();
+    let (view, id) = (d.views[0].id, d.allocate_id(&mut IdSource::seeded(SEED + 1)).unwrap());
+    let face = |name: &str| ModelFace { body: BODY.into(), origin_feature: FEATURE, name: name.into(), path: Vec::new() };
+    let (a, b) = (Silhouette { face: face("F4:boss"), side: SilhouetteSide::Near }, Silhouette { face: face("F5:pin"), side: SilhouetteSide::Far });
+    let kind = DimensionKind::Silhouettes { a, b, direction: LinearDirection::Vertical };
+    d.add_dimensions([Arc::new(Dimension { id, view, kind, offset_mm: 6.0, text: TextPlace::Centred, decimals: 1, override_text: None })]);
+    d.validate().unwrap();
+    let silhouettes = ids::encode(id);
+    let mut v = file(&d);
+    let face = |name: &str| json!({"body": "Box", "origin_feature": 7, "name": name});
+    let saved = json!({"silhouettes": {"a": {"face": face("F4:boss"), "side": "near"}, "b": {"face": face("F5:pin"), "side": "far"}, "direction": "vertical"}});
+    assert_eq!(dim(&mut v, &silhouettes)["kind"], saved);
+    assert_eq!(Drawing::from_json(&v.to_string()).unwrap(), d);
+    let rule = |rule: &str| format!("damaged drawing: dimension {silhouettes}: {rule}");
+    let changed = |edit: &dyn Fn(&mut Value)| refused(&d, |v| edit(&mut dim(v, &silhouettes)["kind"]["silhouettes"]));
+    assert_eq!(changed(&|k| k["b"]["face"]["name"] = json!("")), rule("a name in a reference is 1 to 512 bytes, without control characters"));
+    assert_eq!(changed(&|k| k["a"]["face"]["origin_feature"] = json!(0)), rule("a reference names the feature that made its body"));
+    assert_eq!(changed(&|k| k["direction"] = json!({"along": [0.0, 0.0]})), rule("the direction to measure along is zero or not finite"));
+    let malformed: [fn(&mut Value); 3] = [|k| k["a"]["side"] = json!("left"), |k| k["reading"] = json!("true"), |k| k["b"]["edges"] = json!([])];
+    for edit in malformed {
+        let why = changed(&edit);
+        assert!(why.starts_with("damaged drawing: "), "{why}");
+    }
 }
 
 /// A direction along a picked line saves as its plane coordinates and reads back as the same
