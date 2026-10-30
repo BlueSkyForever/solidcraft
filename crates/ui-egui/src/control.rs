@@ -238,6 +238,7 @@ fn execute(app: &mut SolveApp, id: &str, params: Value) -> Result<Value, String>
                 | "view.grid"
                 | "view.ground_shadow"
                 | "view.navigation_bar"
+                | "view.parts_library"
                 | "view.next_tab"
                 | "view.previous_tab"
                 | "view.layout"

@@ -135,12 +135,28 @@ pub fn thumbnail(s: &Session) -> Option<egui::ColorImage> {
     cam.fit(&b);
     // Fill the card: the fit leaves room for a whole window's margins.
     cam.distance *= 0.7;
-    let mut scene = solidcraft_engine::view::scene(s, &cam);
-    // The part alone, over transparent pixels: the card's own tile shows behind it.
+    let scene = solidcraft_engine::view::scene(s, &cam);
+    // Drawn on the GPU by the renderer the app installs; none (a browser): no picture.
+    let picture = solidcraft_engine::capture::rgba(&scene, &cam, THUMB[0] as u32, THUMB[1] as u32).ok()?;
+    Some(egui::ColorImage::from_rgba_unmultiplied(THUMB, &picture.rgba))
+}
+
+/// A picture of the part alone over transparent pixels, for the parts library's tiles: no
+/// backdrop, grid or axes.
+#[cfg(not(target_arch = "wasm32"))]
+fn cutout(s: &Session) -> Option<egui::ColorImage> {
+    let mut cam = Camera::default();
+    cam.set_view(StandardView::Iso);
+    let b = solidcraft_engine::view::bounds(s);
+    if b.is_empty() {
+        return None;
+    }
+    cam.fit(&b);
+    cam.distance *= 0.7;
+    let guides = solidcraft_engine::view::Guides { grid: false, axes: false };
+    let mut scene = solidcraft_engine::view::scene_with_guides(s, &cam, s.section, guides);
     scene.transparent = true;
-    scene.grid.clear();
-    // Drawn on the GPU by the renderer the app installs; none (a browser): no picture. Over
-    // transparent black, the edges come back premultiplied.
+    // Over transparent black, the edges come back premultiplied.
     let picture = solidcraft_engine::capture::rgba(&scene, &cam, THUMB[0] as u32, THUMB[1] as u32).ok()?;
     Some(egui::ColorImage::from_rgba_premultiplied(THUMB, &picture.rgba))
 }
@@ -152,8 +168,6 @@ fn cache_path(key: &str) -> Option<std::path::PathBuf> {
     let meta = std::fs::metadata(key).ok()?;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     key.hash(&mut h);
-    // Pictures drawn over transparent pixels (2): the opaque ones before are drawn again.
-    2u8.hash(&mut h);
     meta.len().hash(&mut h);
     meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.hash(&mut h);
     let root = std::env::var_os("LOCALAPPDATA")
@@ -288,10 +302,30 @@ pub(crate) fn install(h: &mut HomeState, ctx: &egui::Context, key: &str, img: Op
     }
 }
 
-/// A file's picture for the parts library: a stored one, else made by opening the file (on a
-/// worker thread).
-pub(crate) fn picture_of(key: &str) -> Option<egui::ColorImage> {
-    picture(key).or_else(|| make(key).1)
+/// A file's picture for the parts library, made once by opening the file (on a worker thread);
+/// a file that can't be drawn shows its stored picture, if it has one.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn part_picture(key: &str) -> Option<egui::ColorImage> {
+    // Kept apart from Home's pictures, which have their backdrop.
+    let path = cache_path(key).map(|p| p.with_file_name(format!("part-{}", p.file_name().unwrap_or_default().to_string_lossy())));
+    if let Some(bytes) = path.as_ref().and_then(|p| std::fs::read(p).ok())
+        && let Some(img) = decode_thumbnail(bytes)
+    {
+        return Some(img);
+    }
+    let mut s = Session::default();
+    let drawn = s.execute("doc.open", &serde_json::json!({ "path": key })).ok().and_then(|_| cutout(&s));
+    let Some(img) = drawn else {
+        return picture(key);
+    };
+    let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_srgba_unmultiplied()).collect();
+    if let (Some(path), Some(bytes)) = (path, solidcraft_engine::render::png(THUMB[0], THUMB[1], rgba))
+        && let Some(dir) = path.parent()
+        && std::fs::create_dir_all(dir).is_ok()
+    {
+        let _ = solidcraft_engine::io::write_atomic(&path, &bytes, false);
+    }
+    Some(img)
 }
 
 /// Upload a picture into a texture map (the parts library's).

@@ -634,7 +634,7 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     app.shell.history_dock_space = Some(ui.available_rect_before_wrap());
     if Container::for_layout(app.ui.layout, Surface::Panel).floating() {
-        let rect = floating_rect(beside_library(app, ui.available_rect_before_wrap()));
+        let rect = floating_rect(ui.available_rect_before_wrap());
         // A window too short for the card (the ribbon already fills it) leaves the history out
         // rather than drawing into a negative-size rectangle.
         if !rect.is_finite() || rect.width() < 1.0 || rect.height() < 30.0 {
@@ -660,13 +660,6 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.shell.history = Some(response.response.rect);
         crate::scenario::publish_rect("history:strip", response.response.rect);
     }
-}
-
-/// `available` less the parts library's room at the window's left: the bar starts beside it.
-pub(crate) fn beside_library(app: &SolveApp, available: Rect) -> Rect {
-    let mut r = available;
-    r.min.x = (r.min.x + crate::library::reserved(app)).min(r.max.x);
-    r
 }
 
 pub(crate) fn floating_rect(available: Rect) -> Rect {

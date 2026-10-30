@@ -1146,6 +1146,9 @@ impl SolveApp {
                 "view.navigation_bar" => {
                     self.ui.show_navigation_bar = v.get("visible").and_then(Value::as_bool).unwrap_or(!self.ui.show_navigation_bar)
                 }
+                "view.parts_library" => {
+                    self.preferences.library_open = v.get("visible").and_then(Value::as_bool).unwrap_or(!self.preferences.library_open)
+                }
                 "view.next_tab" | "view.previous_tab" => documents::cycle(self, id == "view.next_tab"),
                 // An edit OK'd on a feature behind the history marker changes nothing in the view:
                 // say why, or the edit looks as if it had silently failed (#8100).
@@ -1534,6 +1537,7 @@ impl SolveApp {
                 | "view.grid"
                 | "view.ground_shadow"
                 | "view.navigation_bar"
+                | "view.parts_library"
                 | "view.next_tab"
                 | "view.previous_tab"
         ) {
@@ -2407,7 +2411,7 @@ impl SolveApp {
         }
         open_meshing::tick(self, ctx);
         open_meshing::refresh(self, ctx.input(|i| i.time));
-        self.esc_handled = false;
+        self.esc_handled = library::takes_esc(ctx);
         prefs::apply(self, ctx);
         // The view's own dark or light only changes tokens, not egui's visuals: no restyle.
         theme::set_viewport_dark(self.preferences.viewport_theme.dark());
@@ -2635,7 +2639,7 @@ impl SolveApp {
                 // A dialog in the left column holds the History's place.
                 (!dialog_column::holds(self)).then(|| timeline_left::floating_rect(self, below_ribbon))
             } else {
-                show_timeline.then(|| timeline::floating_rect(timeline::beside_library(self, full)))
+                show_timeline.then(|| timeline::floating_rect(full))
             };
             // Draw the scene first, then let the unchanged panel layouts cover it. The
             // viewport keeps its full projection even underneath the browser and cards.

@@ -677,12 +677,6 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     FileAction::Command("component.insert_design").run(app);
                     close = true;
                 }
-                let library = if app.preferences.library_open { crate::i18n::tr("library.menu_hide") } else { crate::i18n::tr("library.menu_show") };
-                if item(ui, library, "", "") {
-                    app.preferences.library_open = !app.preferences.library_open;
-                    app.preferences.library_collapsed = false;
-                    close = true;
-                }
                 if item_if(ui, app.tr("ui.save"), "Ctrl+S", "save", shown) {
                     FileAction::Save.run(app);
                     close = true;
@@ -1537,7 +1531,8 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     && (resp.is_pointer_button_down_on()
                         || running.as_deref() == Some(selected.id)
                         || family_open
-                        || (selected.id == "view.shots_strip" && app.preferences.render_shots_strip))
+                        || (selected.id == "view.shots_strip" && app.preferences.render_shots_strip)
+                        || (selected.id == "view.parts_library" && app.preferences.library_open))
                 {
                     painter.rect(whole, t.radius_sm, accent.soft, Stroke::new(1.0, accent.color), egui::StrokeKind::Inside);
                 } else if resp.hovered() && info.enabled {
@@ -1616,7 +1611,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     );
                     let info = crate::render_workspace::interactive_command_info(app, c);
                     let resp = ui.interact(cell, ui.id().with(("cmd", c.id)), Sense::click_and_drag());
-                    let active = running.as_deref() == Some(c.id);
+                    let active = running.as_deref() == Some(c.id) || (c.id == "view.parts_library" && app.preferences.library_open);
                     let accent = crate::theme::TabAccent::for_tab(&t, &tab);
                     painter.rect(
                         cell,
