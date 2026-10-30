@@ -1307,8 +1307,14 @@ const JOINT_ARROW_WELL: f32 = 20.0;
 /// The browser-state key that remembers the timeline's joints were shown one by one.
 const JOINTS_KEY: &str = "timeline_joints";
 
+/// Whether `count` joints group as one button: from the second joint, unless the preference shows
+/// each joint as before (Preferences > Interface, "Group joints in the History").
+fn grouped(app: &SolveApp, count: usize) -> bool {
+    count > JOINT_GROUP_MIN && app.preferences.history_group_joints
+}
+
 fn joints_open(app: &SolveApp, count: usize) -> bool {
-    count <= JOINT_GROUP_MIN || crate::browser::is_open(app, JOINTS_KEY, false)
+    !grouped(app, count) || crate::browser::is_open(app, JOINTS_KEY, false)
 }
 
 fn toggle_joints(app: &mut SolveApp) {
@@ -1377,7 +1383,7 @@ pub(crate) fn timeline_joint_tiles(app: &mut SolveApp, ui: &mut egui::Ui, p: &eg
     }
     x += 8.0;
     // Only the joints outside feature folders group here; a folder's own tile holds the rest.
-    if ids.is_none() && joints.len() > JOINT_GROUP_MIN {
+    if ids.is_none() && grouped(app, joints.len()) {
         let open = joints_open(app, joints.len());
         let (width, clicked) = joint_group_button(ui, p, egui::pos2(x, r.top() + 6.0), joints.len(), open);
         if clicked {
@@ -1445,7 +1451,7 @@ pub(crate) fn timeline_joint_rows(app: &mut SolveApp, ui: &mut egui::Ui, ids: Op
     }
     if ids.is_none() {
         ui.add_space(4.0);
-        if joints.len() > JOINT_GROUP_MIN {
+        if grouped(app, joints.len()) {
             let shown = joints_open(app, joints.len());
             let header = format!("JOINTS ({})", joints.len());
             let clicked = ui
