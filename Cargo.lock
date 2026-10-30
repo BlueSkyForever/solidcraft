@@ -4261,6 +4261,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solidcraft-collab-wire"
+version = "0.27.1"
+dependencies = [
+ "miniz_oxide 0.9.1",
+ "sha2 0.10.9",
+ "solidcraft-geom",
+ "solidcraft-testkit",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "solidcraft-derive"
 version = "0.27.1"
 dependencies = [
@@ -4296,6 +4307,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "solidcraft-collab-wire",
  "solidcraft-doc",
  "solidcraft-geom",
  "solidcraft-io",
@@ -4356,6 +4368,7 @@ dependencies = [
  "solidcraft-doc",
  "solidcraft-geom",
  "solidcraft-kernel",
+ "solidcraft-testkit",
  "thiserror 2.0.21",
  "zip",
 ]
@@ -4422,6 +4435,10 @@ version = "0.27.1"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "solidcraft-testkit"
+version = "0.27.1"
 
 [[package]]
 name = "solidcraft-ui-egui"
