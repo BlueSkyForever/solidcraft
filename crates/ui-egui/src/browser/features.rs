@@ -53,25 +53,25 @@ pub(crate) fn reveal_in_history(app: &mut SolveApp, id: u64) {
     app.tree.reveal_feature = Some(Reveal { id, path: Vec::new() });
 }
 
-/// How many features the folder lists: those before the history marker (an editor rolls the
-/// model back), but the history layout lists them all, with the marker among them.
+/// Feature folders hide later rows only while editing; history always lists every feature.
 fn shown_features(app: &SolveApp, compact: bool) -> usize {
     let n = app.session.doc.features.len();
-    if compact { n } else { app.session.doc.marker.unwrap_or(n) }
+    if !compact && app.dialog.as_ref().is_some_and(|d| d.editing.is_some()) { app.session.doc.marker.unwrap_or(n) } else { n }
 }
 
 pub(super) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, component: u64, path: &[u64], depth: usize, acts: &mut Actions) {
     // Compact history: every feature of the component, sketches too, in history order with the
     // marker, in place of the timeline.
     let compact = app.preferences.history_in_browser;
+    let shown = shown_features(app, compact);
     let has_features = match app.tree.model.as_ref().filter(|m| m.matches(&app.session) && !compact) {
-        Some(model) => model.features.get(&component).is_some_and(|features| !features.is_empty()),
+        Some(model) => model.features.get(&component).is_some_and(|features| features.iter().any(|&index| index < shown)),
         None => app
             .session
             .doc
             .features
             .iter()
-            .take(shown_features(app, compact))
+            .take(shown)
             .any(|feature| feature.component == component && (compact || !matches!(feature.kind, FeatureKind::Sketch { .. }))),
     };
     if !has_features {
@@ -110,7 +110,7 @@ pub(super) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, component: u64, path: 
             .doc
             .features
             .iter()
-            .take(shown_features(app, compact))
+            .take(shown)
             .enumerate()
             .filter_map(|(i, f)| (f.component == component && (compact || !matches!(f.kind, FeatureKind::Sketch { .. }))).then_some(i))
             .collect(),
@@ -125,7 +125,7 @@ pub(super) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, component: u64, path: 
         if id.is_some_and(|id| lit.contains(&id) || from_view.contains(&Some(id))) { Mark::Here } else { Mark::None }
     };
     if !compact {
-        for index in indices {
+        for index in indices.into_iter().take_while(|&index| index < shown) {
             let _ = feature_row(app, ui, acts, &here, index, depth + 1, None, mark(app, index));
         }
         return;
@@ -356,19 +356,45 @@ mod tests {
     }
 
     #[test]
-    fn browser_feature_rows_roll_back_with_the_model() {
+    fn browser_feature_rows_stay_listed_after_manual_rollback() {
         let mut h = Harness::new();
         for name in ["Before", "After"] {
             h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"name":name})).unwrap();
         }
         h.app.run("timeline.roll_to", json!({"position":1})).unwrap();
         for cache in ["current", "missing", "stale"] {
-            assert_eq!(feature_rows(&mut h, cache), ["Features", "Before"], "{cache}");
+            assert_eq!(feature_rows(&mut h, cache), ["Features", "Before", "After"], "{cache}");
         }
         h.app.run("timeline.roll_to", json!({})).unwrap();
         for cache in ["current", "missing", "stale"] {
             assert_eq!(feature_rows(&mut h, cache), ["Features", "Before", "After"], "{cache}");
         }
+    }
+
+    #[test]
+    fn browser_feature_rows_follow_the_editor_and_restore_the_manual_marker() {
+        let mut h = Harness::new();
+        let mut ids = Vec::new();
+        for name in ["Before", "Edited", "After"] {
+            ids.push(h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"name":name})).unwrap()["feature"].as_u64().unwrap());
+        }
+        h.app.run("timeline.roll_to", json!({"position":2})).unwrap();
+        h.app.edit_feature(ids[1]);
+        assert!(h.app.dialog.as_ref().is_some_and(|d| d.editing.is_some()));
+        for cache in ["current", "missing", "stale"] {
+            assert_eq!(feature_rows(&mut h, cache), ["Features", "Before"], "{cache}");
+            assert_eq!(shown_features(&h.app, true), 3, "history keeps all rows during editing");
+        }
+        crate::dialogs::cancel(&mut h.app);
+        assert_eq!(h.app.session.doc.marker, Some(2));
+        for cache in ["current", "missing", "stale"] {
+            assert_eq!(feature_rows(&mut h, cache), ["Features", "Before", "Edited", "After"], "{cache}");
+        }
+        h.app.edit_feature(ids[0]);
+        for cache in ["current", "missing", "stale"] {
+            assert!(feature_rows(&mut h, cache).is_empty(), "{cache}: no feature precedes the editor");
+        }
+        crate::dialogs::cancel(&mut h.app);
     }
 
     #[test]
