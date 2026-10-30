@@ -5241,7 +5241,9 @@ mod persistent_ribbon_tests {
         h.app.preferences.ribbon_menus_skip_pinned = false;
         h.frames(3);
         h.step(&json!({"click":{"handle":format!("panel:INSPECT:{panel}")}})).unwrap();
-        h.frames(3);
+        // Exact token colours are checked after the native Area fade, not during its opacity ramp.
+        let settle_frames = (h.ctx.global_style().animation_time * 60.0).ceil() as usize + 2;
+        h.frames(settle_frames.max(3));
         assert!(scenario::rect_of("toolbar_dropdown").is_some());
     }
 
