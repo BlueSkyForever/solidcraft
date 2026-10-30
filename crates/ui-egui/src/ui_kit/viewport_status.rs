@@ -306,7 +306,7 @@ pub(crate) fn viewport_status_summary(
                             "ui.viewport_status_summary_label",
                             &[("name", &latest.name), ("count", &items.len().saturating_sub(1).to_string())],
                         );
-                        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+                        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label.as_str()));
                         scenario::publish_target("viewport_status:summary", rect);
                         scenario::publish_target(&target(latest, "summary"), rect);
                         response
