@@ -36,6 +36,18 @@ fn cylinder_measures_match_analytic() {
 }
 
 #[test]
+fn cylinder_face_query_reuses_its_surface_lookup() {
+    let b = cylinder(Vec3::ZERO, Vec3::Z, 5.0, 10.0).unwrap();
+    let query = CylinderFaceQuery::new(&b).unwrap();
+    for p in [Vec3::new(5.0, 0.0, 2.0), Vec3::new(0.0, 5.0, 8.0)] {
+        let face = query.at(p).unwrap();
+        assert!((face.radius - 5.0).abs() < 1e-3, "{face:?}");
+        assert!(!face.internal, "{face:?}");
+        assert_eq!(face, cylinder_face_at(&b, p).unwrap());
+    }
+}
+
+#[test]
 fn extrude_on_other_planes_and_offsets() {
     let b = extrude(&Plane::XZ, &[rect(10.0, 5.0)], -2.0, 3.0).unwrap().pop().unwrap();
     let m = measure(&b).unwrap();

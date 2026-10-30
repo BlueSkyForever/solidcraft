@@ -55,6 +55,32 @@ fn the_tree_finds_the_nearest_point_as_a_search_of_every_triangle_does() {
 }
 
 #[test]
+fn the_tree_visits_every_triangle_within_a_point_distance() {
+    let mesh = cuboid(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0));
+    let tree = TriangleTree::new(&mesh);
+    let p = Vec3::new(5.0, 5.0, 10.0);
+    let limit = 1.0;
+    let mut got = Vec::new();
+    tree.within_distance(p, limit, |distance, triangle| got.push((triangle, distance)));
+    got.sort_by_key(|(triangle, _)| *triangle);
+    let mut want: Vec<_> = mesh
+        .triangles
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| {
+            let [a, b, c] = mesh.tri(t)?;
+            let distance = closest_on_triangle(p, a, b, c).dist(p);
+            (distance <= limit).then_some((i as u32, distance))
+        })
+        .collect();
+    want.sort_by_key(|(triangle, _)| *triangle);
+    assert_eq!(got, want);
+    let mut called = false;
+    tree.within_distance(p, f64::NAN, |_, _| called = true);
+    assert!(!called);
+}
+
+#[test]
 fn a_mesh_and_its_copy_are_identical() {
     let a = cuboid(Vec3::ZERO, Vec3::new(40.0, 30.0, 10.0));
     let c = compare(&a, &a.clone(), &CompareOptions::default(), &serial);

@@ -327,6 +327,33 @@ impl TriangleTree {
         hit.map(|i| (best2.sqrt(), i))
     }
 
+    /// Calls `f(distance, triangle)` for every triangle within `limit` of `p`.
+    pub fn within_distance(&self, p: Vec3, limit: f64, mut f: impl FnMut(f64, u32)) {
+        if !p.is_finite() || !limit.is_finite() || limit < 0.0 || self.tris.is_empty() {
+            return;
+        }
+        let limit2 = limit * limit;
+        let mut stack = vec![0u32];
+        while let Some(ni) = stack.pop() {
+            let Some(node) = self.nodes.get(ni as usize) else { continue };
+            if box_dist2(&node.bbox, p) > limit2 {
+                continue;
+            }
+            if node.leaf {
+                for k in node.a..node.b {
+                    let (Some([a, b, c]), Some(id)) = (self.tris.get(k as usize), self.ids.get(k as usize)) else { continue };
+                    let distance2 = (closest_on_triangle(p, *a, *b, *c) - p).len2();
+                    if distance2 <= limit2 {
+                        f(distance2.sqrt(), *id);
+                    }
+                }
+            } else {
+                stack.push(node.a);
+                stack.push(node.b);
+            }
+        }
+    }
+
     /// Every triangle (by its place in the tree) whose box overlaps `bx` on the two axes other
     /// than `axis`: the triangles a line along `axis` through `bx` can cross.
     fn column(&self, bx: &Aabb3, axis: usize) -> Vec<usize> {

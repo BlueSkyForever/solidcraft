@@ -35,6 +35,8 @@ pub struct ModelBody {
     // Timeline snapshots are cloned before meshes are requested. Share the cell itself so
     // meshing any snapshot also warms every unchanged copy of this body.
     mesh: Arc<OnceLock<Arc<Mesh>>>,
+    /// Reusable cylindrical face lookup for hole placement, shared by snapshots of this geometry.
+    cylinder_face_query: Arc<OnceLock<(Body, Arc<kernel::CylinderFaceQuery>)>>,
     /// Joint face measurements use their own tolerance, independent of display quality.
     /// Shared by snapshots of this geometry; the body identity guards direct replacement.
     joint_faces: Arc<OnceLock<JointFaces>>,
@@ -84,6 +86,7 @@ impl ModelBody {
             body,
             feature,
             mesh: Arc::new(OnceLock::new()),
+            cylinder_face_query: Arc::new(OnceLock::new()),
             joint_faces: Arc::new(OnceLock::new()),
             mesh_placement: None,
             plan: Arc::new(Default::default()),
@@ -178,6 +181,13 @@ impl ModelBody {
             Some(placed) => self.mesh.get_or_init(|| placed.mesh()).clone(),
             None => placed_mesh::reference_mesh(&self.body, &self.mesh, self.display_tol()),
         }
+    }
+
+    /// A cached cylindrical face lookup over this body's reference mesh.
+    pub fn cylinder_face_query(&self) -> Arc<kernel::CylinderFaceQuery> {
+        let query = || Arc::new(kernel::CylinderFaceQuery::from_mesh(&self.body, self.mesh()));
+        let (body, cached) = self.cylinder_face_query.get_or_init(|| (self.body.clone(), query()));
+        if body.same(&self.body) { cached.clone() } else { query() }
     }
 
     /// The display plan of this body at the viewport's display quality
@@ -8344,6 +8354,7 @@ impl PlacedBodies {
         self.reused(b, m).map(|placed| {
             let mut fresh = ModelBody::new(name.to_string(), placed.body.clone(), b.feature);
             fresh.mesh = placed.mesh.clone();
+            fresh.cylinder_face_query = placed.cylinder_face_query.clone();
             fresh.measured = placed.measured.clone();
             fresh.mesh_placement = placed.mesh_placement.clone();
             fresh.plan = placed.plan.clone();
@@ -8415,6 +8426,7 @@ impl FrameBodies {
 fn in_frame(b: &ModelBody, m: &crate::Mat, placed: &ModelBody) -> ModelBody {
     let mut moved = ModelBody::new(b.name.clone(), placed.body.clone(), b.feature);
     moved.mesh = placed.mesh.clone();
+    moved.cylinder_face_query = placed.cylinder_face_query.clone();
     moved.plan = placed.plan.clone();
     moved.plan_mesh = placed.plan_mesh.clone();
     moved.component = b.component;
@@ -8610,6 +8622,16 @@ mod display_preparation_tests {
 #[cfg(test)]
 mod world_placement_cache_tests {
     use super::*;
+
+    #[test]
+    fn cylinder_face_query_is_shared_by_cloned_model_bodies() {
+        let body = kernel::cylinder(Vec3::ZERO, Vec3::Z, 5.0, 10.0).unwrap();
+        let model_body = ModelBody::new("Cylinder".into(), body, 1);
+        let query = model_body.cylinder_face_query();
+        let cloned_query = model_body.clone().cylinder_face_query();
+        assert!(Arc::ptr_eq(&query, &cloned_query));
+        assert!(query.at(Vec3::new(5.0, 0.0, 5.0)).is_some_and(|face| (face.radius - 5.0).abs() < 1e-6));
+    }
 
     #[test]
     fn placed_real_feature_retains_names_from_its_original_feature_context() {
