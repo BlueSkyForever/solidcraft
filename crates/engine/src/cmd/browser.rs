@@ -143,16 +143,12 @@ fn holder_list<'a>(d: &'a mut solidcraft_doc::Document, component: u64, folder: 
     }
 }
 
-/// List the groups under `holder` that its list does not name yet, so a position among them can
-/// be found.
+/// Name every group under `holder` in its list, where they are drawn, so a position among them
+/// can be found.
 fn settle(d: &mut solidcraft_doc::Document, component: u64, folder: &str, holder: Option<u64>) {
-    let children = d.child_groups(component, folder, holder);
+    let all = d.ordered_entries(component, folder, holder);
     if let Some(list) = holder_list(d, component, folder, holder) {
-        for c in children {
-            if !list.contains(&BrowserEntry::Group(c)) {
-                list.push(BrowserEntry::Group(c));
-            }
-        }
+        *list = all;
     }
 }
 
@@ -219,6 +215,7 @@ fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc_mut();
     let Some(g) = d.browser_group(id).cloned() else { return Ok(json!({ "group": id })) };
     settle(d, g.component, &g.folder, Some(id));
+    settle(d, g.component, &g.folder, g.parent);
     let inside = d.browser_group(id).map(|g| g.items.clone()).unwrap_or_default();
     for child in d.browser_groups.iter_mut().filter(|c| c.parent == Some(id)) {
         child.parent = g.parent;

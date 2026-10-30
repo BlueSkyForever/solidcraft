@@ -2384,9 +2384,9 @@ fn construction_sel(f: &solidcraft_engine::doc::Feature) -> Sel {
     }
 }
 
-/// A folder's rows in browser order: the groups and items its order list names, then the groups
-/// it does not (by creation), then the items in no group. A group's rows are ordered the same way
-/// by its own list. `prefix` is the scope the groups' tree keys start with.
+/// A folder's rows in browser order (see `Document::ordered_entries`), then the items in no list
+/// in their natural order. A group's rows are ordered the same way by its own list. `prefix` is
+/// the scope the groups' tree keys start with.
 fn arrange(doc: &solidcraft_engine::doc::Document, comp: u64, folder: &str, prefix: &str, all: Vec<Entry>) -> Vec<cache::Row> {
     use cache::Row;
     use solidcraft_engine::doc::BrowserEntry;
@@ -2395,9 +2395,7 @@ fn arrange(doc: &solidcraft_engine::doc::Document, comp: u64, folder: &str, pref
         index.entry(e.key.clone()).or_insert(i);
     }
     let mut pool: Vec<Option<Entry>> = all.into_iter().map(Some).collect();
-    let mut take = |key: &str| index.get(key).and_then(|i| pool[*i].take());
-    // Groups first, so an item in a group is never also listed loose.
-    #[allow(clippy::too_many_arguments)]
+    let mut take = |key: &str| index.get(key).and_then(|i| pool[*i].take()).map(|e| Row::Item(Box::new(e)));
     fn build(
         doc: &solidcraft_engine::doc::Document,
         comp: u64,
@@ -2405,52 +2403,34 @@ fn arrange(doc: &solidcraft_engine::doc::Document, comp: u64, folder: &str, pref
         prefix: &str,
         id: u64,
         left: usize,
-        take: &mut dyn FnMut(&str) -> Option<Entry>,
+        take: &mut dyn FnMut(&str) -> Option<Row>,
     ) -> Option<cache::Group> {
         let g = doc.browser_group(id)?;
         let mut rows = Vec::new();
-        let mut seen = Vec::new();
-        for e in &g.items {
+        for e in doc.ordered_entries(comp, folder, Some(id)) {
             match e {
-                BrowserEntry::Item(k) => rows.extend(take(k).map(|e| Row::Item(Box::new(e)))),
-                BrowserEntry::Group(c) if left > 0 && doc.browser_group(*c).is_some_and(|c| c.parent == Some(id)) && !seen.contains(c) => {
-                    seen.push(*c);
-                    rows.extend(build(doc, comp, folder, prefix, *c, left - 1, take).map(Row::Group));
-                }
+                BrowserEntry::Item(k) => rows.extend(take(&k)),
+                BrowserEntry::Group(c) if left > 0 => rows.extend(build(doc, comp, folder, prefix, c, left - 1, take).map(Row::Group)),
                 BrowserEntry::Group(_) => {}
-            }
-        }
-        if left > 0 {
-            for c in doc.child_groups(comp, folder, Some(id)) {
-                if !seen.contains(&c) {
-                    rows.extend(build(doc, comp, folder, prefix, c, left - 1, take).map(Row::Group));
-                }
             }
         }
         let count = rows.iter().map(Row::count).sum();
         Some(cache::Group { id, key: format!("{prefix}/g{id}"), label: format!("{} ({count})", g.name), count, rows })
     }
-    let tops = doc.child_groups(comp, folder, None);
-    let mut groups: Vec<Option<cache::Group>> =
-        tops.iter().map(|id| build(doc, comp, folder, prefix, *id, solidcraft_engine::doc::MAX_GROUP_NESTING, &mut take)).collect();
-    let mut rows = Vec::new();
-    let mut place_group = |rows: &mut Vec<Row>, id: u64| {
-        if let Some(i) = tops.iter().position(|t| *t == id)
-            && let Some(g) = groups[i].take()
-        {
-            rows.push(Row::Group(g));
-        }
-    };
-    if let Some(order) = doc.browser_order.get(&format!("{comp}/{folder}")) {
-        for e in order {
-            match e {
-                BrowserEntry::Group(id) => place_group(&mut rows, *id),
-                BrowserEntry::Item(k) => rows.extend(take(k).map(|e| Row::Item(Box::new(e)))),
-            }
+    let order = doc.ordered_entries(comp, folder, None);
+    // Groups first, so an item in a group is never also listed loose.
+    let mut groups: std::collections::HashMap<u64, cache::Group> = std::collections::HashMap::new();
+    for e in &order {
+        if let BrowserEntry::Group(id) = e {
+            groups.extend(build(doc, comp, folder, prefix, *id, solidcraft_engine::doc::MAX_GROUP_NESTING, &mut take).map(|g| (*id, g)));
         }
     }
-    for id in &tops {
-        place_group(&mut rows, *id);
+    let mut rows = Vec::new();
+    for e in order {
+        match e {
+            BrowserEntry::Group(id) => rows.extend(groups.remove(&id).map(Row::Group)),
+            BrowserEntry::Item(k) => rows.extend(take(&k)),
+        }
     }
     rows.extend(pool.into_iter().flatten().map(|e| Row::Item(Box::new(e))));
     rows
@@ -2636,6 +2616,12 @@ fn folder_level(
     acts: &mut Actions,
 ) {
     let render = crate::render_workspace::active(app);
+    // The render workspace has always listed a folder's loose items above its groups.
+    let items_first = render && holder.is_none();
+    let rows = rows
+        .iter()
+        .filter(|r| items_first && matches!(r, cache::Row::Item(_)))
+        .chain(rows.iter().filter(|r| !items_first || matches!(r, cache::Row::Group(_))));
     for row in rows {
         let group = match row {
             cache::Row::Item(e) => {

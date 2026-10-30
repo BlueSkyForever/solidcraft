@@ -47,25 +47,28 @@ impl Document {
         height(self, id, MAX_GROUP_NESTING + 1)
     }
 
-    /// The groups directly under `parent` (`None`: the top level) of a component's folder, in
-    /// their saved order: first the ones the holder's list names, then the rest by creation.
-    pub fn child_groups(&self, component: u64, folder: &str, parent: Option<u64>) -> Vec<u64> {
-        let listed: &[BrowserEntry] = match parent {
-            Some(p) => self.browser_group(p).map_or(&[], |g| &g.items),
+    /// The entries of a holder's list in display order: a group's contents, or the folder's top
+    /// level when `holder` is `None`. Groups the list names come where it names them. The child
+    /// groups it does not name (in creation order) go just after the last group it names, or
+    /// first when it names none, so they sit above the items as they always have. Entries for
+    /// groups that are not the holder's children are dropped.
+    pub fn ordered_entries(&self, component: u64, folder: &str, holder: Option<u64>) -> Vec<BrowserEntry> {
+        let listed: &[BrowserEntry] = match holder {
+            Some(g) => self.browser_group(g).map_or(&[], |g| &g.items),
             None => self.browser_order.get(&format!("{component}/{folder}")).map_or(&[], Vec::as_slice),
         };
-        let mine = |g: &&BrowserGroup| g.component == component && g.folder == folder && g.parent == parent;
-        let mut out: Vec<u64> = Vec::new();
+        let mine: Vec<u64> =
+            self.browser_groups.iter().filter(|g| g.component == component && g.folder == folder && g.parent == holder).map(|g| g.id).collect();
+        let mut out: Vec<BrowserEntry> = Vec::with_capacity(listed.len() + mine.len());
         for e in listed {
-            if let BrowserEntry::Group(id) = e
-                && !out.contains(id)
-                && self.browser_groups.iter().filter(mine).any(|g| g.id == *id)
-            {
-                out.push(*id);
+            match e {
+                BrowserEntry::Group(id) if !mine.contains(id) || out.contains(e) => {}
+                _ => out.push(e.clone()),
             }
         }
-        let rest: Vec<u64> = self.browser_groups.iter().filter(mine).map(|g| g.id).filter(|id| !out.contains(id)).collect();
-        out.extend(rest);
+        let at = out.iter().rposition(|e| matches!(e, BrowserEntry::Group(_))).map_or(0, |i| i + 1);
+        let unlisted: Vec<BrowserEntry> = mine.iter().map(|id| BrowserEntry::Group(*id)).filter(|e| !out.contains(e)).collect();
+        out.splice(at..at, unlisted);
         out
     }
 

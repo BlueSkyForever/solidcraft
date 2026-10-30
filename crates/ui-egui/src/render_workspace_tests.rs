@@ -5149,7 +5149,6 @@ fn render_workspace_browser_compact_geometry_search_and_theme_evidence() {
             pair.save(std::path::Path::new(&dir).join(format!("scene-stages-{}.png", if dark { "dark" } else { "light" }))).unwrap();
         }
         themes.push(images);
-        h.app.tree.collapsed.insert("render:tree:lights".into());
         h.app.run("view.render_browser", json!({"search":true,"query":"Copper"})).unwrap();
         h.app.tree.collapsed.remove("render:tree:objects");
         h.frames(4);
