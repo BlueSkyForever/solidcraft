@@ -2996,9 +2996,14 @@ fn analysis_legend(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
     }
 }
 
-fn section_clip(app: &SolveApp) -> [[f32; 4]; solidcraft_gpu::view::MAX_SECTION_PLANES] {
-    let planes: Vec<(Vec3, f64)> = section_planes(app).iter().map(SectionPlane::clip).collect();
-    solidcraft_gpu::view::clip_planes(&planes)
+/// The section's planes on show for the shader, and each one's hatch, kept by its id.
+pub(crate) fn section_clip(
+    app: &SolveApp,
+) -> ([[f32; 4]; solidcraft_gpu::view::MAX_SECTION_PLANES], [usize; solidcraft_gpu::view::MAX_SECTION_PLANES]) {
+    let planes = section_planes(app);
+    let clip: Vec<(Vec3, f64)> = planes.iter().map(SectionPlane::clip).collect();
+    let hatch: Vec<usize> = planes.iter().map(SectionPlane::hatch).collect();
+    (solidcraft_gpu::view::clip_planes(&clip), solidcraft_gpu::view::clip_hatches(&hatch))
 }
 
 /// Space kept free at the top right of the viewport for the axis view (docked dialogs start below).
@@ -4274,6 +4279,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let size_px = [rect.width() * ppp, rect.height() * ppp];
         let ssaa = supersampling(app, ui.ctx(), proj.vp.to_f32(), size_px);
         let ao_samples = ao_samples(app, ui.ctx(), proj.vp.to_f32(), size_px);
+        let (clip, clip_hatch) = section_clip(app);
         let cb = ViewportCallback(Frame {
             product_lights: None,
             ssaa,
@@ -4289,7 +4295,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             pv_key: app.preview.key,
             pv_slot: app.preview.slot.clone(),
             pv_hide: app.preview.rolled_back,
-            clip: section_clip(app),
+            clip,
+            clip_hatch,
             cap: {
                 let [r, g, b, _] = t.section_cap.to_normalized_gamma_f32();
                 [r, g, b, if section_hatch(app) { 1.0 } else { 0.0 }]
@@ -7705,6 +7712,7 @@ mod tests {
                     back: proj.cam.back().to_f32(),
                     size_px: [w as f32, h as f32],
                     clip: [[0.0; 4]; solidcraft_gpu::view::MAX_SECTION_PLANES],
+                    clip_hatch: [0; solidcraft_gpu::view::MAX_SECTION_PLANES],
                     cap: [0.0; 4],
                     images: Vec::new(),
                     points: Vec::new(),
