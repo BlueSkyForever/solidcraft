@@ -94,6 +94,7 @@ pub(crate) use sphere::{SphereTile, sphere_cursor, sphere_grid, sphere_grid_drag
 pub(crate) use stages::{StageAction, StageBar};
 pub(crate) use status::*;
 pub(crate) use table::*;
+pub(crate) use text::ellipsize_middle;
 pub(crate) use text_menu::menu_open as text_menu_open;
 pub(crate) use tree::*;
 pub(crate) use value_focus::*;
