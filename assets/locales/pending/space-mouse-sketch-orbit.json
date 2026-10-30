@@ -1,0 +1,34 @@
+{
+  "en": {
+    "ui.3d_mouse_sketch_orbit": "Turn sketches with the 3D mouse",
+    "ui.3d_mouse_sketch_orbit_tip": "The 3D mouse also turns the view while a sketch is open and seen square on, as the mouse can. Off: it pans and zooms the sketch until you tilt the view."
+  },
+  "ar": {
+    "ui.3d_mouse_sketch_orbit": "تدوير الرسومات بالفأرة ثلاثية الأبعاد",
+    "ui.3d_mouse_sketch_orbit_tip": "تدير الفأرة ثلاثية الأبعاد العرض أيضًا أثناء فتح رسم ورؤيته من الأمام مباشرة، كما تفعل الفأرة. عند الإيقاف: تحرّك الرسم وتكبّره فقط حتى تميل العرض."
+  },
+  "de": {
+    "ui.3d_mouse_sketch_orbit": "Skizzen mit der 3D-Maus drehen",
+    "ui.3d_mouse_sketch_orbit_tip": "Die 3D-Maus dreht die Ansicht auch, solange eine Skizze offen ist und frontal gesehen wird, wie es die Maus kann. Aus: Sie verschiebt und zoomt die Skizze, bis Sie die Ansicht neigen."
+  },
+  "fr": {
+    "ui.3d_mouse_sketch_orbit": "Faire pivoter les esquisses avec la souris 3D",
+    "ui.3d_mouse_sketch_orbit_tip": "La souris 3D fait aussi pivoter la vue quand une esquisse est ouverte et vue de face, comme la souris. Désactivé : elle déplace et zoome l'esquisse jusqu'à ce que vous incliniez la vue."
+  },
+  "he": {
+    "ui.3d_mouse_sketch_orbit": "סיבוב סקיצות בעכבר התלת־ממדי",
+    "ui.3d_mouse_sketch_orbit_tip": "העכבר התלת־ממדי מסובב את התצוגה גם כשסקיצה פתוחה ונראית חזיתית, כמו שהעכבר יכול. כבוי: הוא מזיז ומגדיל את הסקיצה עד שתטה את התצוגה."
+  },
+  "ja": {
+    "ui.3d_mouse_sketch_orbit": "3D マウスでスケッチを回転",
+    "ui.3d_mouse_sketch_orbit_tip": "スケッチを開いて正面から見ているときも、マウスと同じように 3D マウスでビューを回転します。オフ: ビューを傾けるまで、スケッチのパンとズームのみ行います。"
+  },
+  "vi": {
+    "ui.3d_mouse_sketch_orbit": "Xoay bản phác thảo bằng chuột 3D",
+    "ui.3d_mouse_sketch_orbit_tip": "Chuột 3D cũng xoay khung nhìn khi bản phác thảo đang mở và được nhìn thẳng, như chuột thường. Tắt: chỉ di chuyển và thu phóng bản phác thảo cho đến khi bạn nghiêng khung nhìn."
+  },
+  "zh": {
+    "ui.3d_mouse_sketch_orbit": "用 3D 鼠标旋转草图",
+    "ui.3d_mouse_sketch_orbit_tip": "草图打开并正对视图时，3D 鼠标也能旋转视图，与鼠标一样。关闭：在你倾斜视图之前，只平移和缩放草图。"
+  }
+}
