@@ -268,7 +268,7 @@ fn card_and_column_keep_body_eyes_menus_and_group_drops() {
         h.step(&json!({"drag":[{"handle":"row:Two"},{"handle":"row:Group (1)"}]})).unwrap();
         h.settle();
         let group = h.app.session.doc.browser_groups.iter().find(|g| g.id == group).unwrap();
-        assert!(group.items.iter().any(|name| name == "Two"), "body drop into the folder failed in {mode:?}");
+        assert!(group.has_item("Two"), "body drop into the folder failed in {mode:?}");
     }
 }
 

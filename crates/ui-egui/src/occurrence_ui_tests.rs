@@ -493,7 +493,7 @@ fn a_folded_folders_menu_items_move_to_the_placements_menu() {
     let group = context_menu::items(&h.app, &target).into_iter().find(|i| i.id == "ui.groupSelected").unwrap();
     context_menu::run_item(&mut h.app, &group, egui::Pos2::ZERO);
     let made = h.app.session.doc.browser_groups.iter().find(|g| g.component == component).unwrap();
-    assert_eq!(made.items, ["Body1", "Second"]);
+    assert_eq!(made.item_keys().collect::<Vec<_>>(), ["Body1", "Second"]);
     h.app.preferences.browser_bodies_folders = BodiesFolders::Always;
     assert!(!has(&h, "component.from_bodies"), "Always: on the folder's own menu");
 }
