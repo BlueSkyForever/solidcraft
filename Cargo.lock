@@ -4384,6 +4384,7 @@ dependencies = [
 name = "solidcraft-mcp"
 version = "0.27.1"
 dependencies = [
+ "image",
  "serde_json",
  "solidcraft-engine",
  "solidcraft-gpu",
