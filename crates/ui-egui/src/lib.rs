@@ -208,6 +208,9 @@ mod primitive_placement;
 #[cfg(test)]
 mod primitive_units_tests;
 mod print_face_ui;
+pub(crate) mod quick_measure;
+#[cfg(test)]
+mod quick_measure_tests;
 pub mod recovery_ui;
 pub mod ref_images;
 mod render_ui;
@@ -611,6 +614,8 @@ pub struct SolveApp {
     pub recoverable: Vec<solidcraft_engine::recovery::Entry>,
     /// Discard all was clicked in the recovery window: its confirmation is showing (#9299).
     pub recovery_discard_all: bool,
+    /// The selection's measurement in the view's corner (#7000).
+    pub(crate) quick_measure: quick_measure::QuickMeasure,
     /// The bodies of a just-opened Y-up file, offered to be stood up (`stand_up`).
     pub stand_up: Option<Vec<String>>,
     /// The placement of the component that file came in as: the offer turns it.
@@ -802,6 +807,7 @@ impl SolveApp {
             network_prompt: None,
             recoverable: Vec::new(),
             recovery_discard_all: false,
+            quick_measure: Default::default(),
             stand_up: None,
             stand_up_occurrence: None,
             stand_up_reason: false,
