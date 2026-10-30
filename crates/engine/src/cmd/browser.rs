@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use solidcraft_doc::FeatureKind;
+use solidcraft_doc::{BrowserEntry, FeatureKind, MAX_GROUP_NESTING};
 
 use super::CommandSpec;
 use crate::params::{bad, bool_, str_};
@@ -24,11 +24,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("sketch: id or name; plane: as sketch.create; frame?: as sketch.create; author_path?: exact owner occurrence ids; explicitly rebinds or freezes the plane while preserving geometry and dimension names"),
     CommandSpec::new("browser.group", "New Group", group)
         .icon("folder")
-        .params("folder: bodies|sketches|construction; component?: id (default 0); name?; items?: [keys] (they leave other groups)"),
-    CommandSpec::new("browser.ungroup", "Ungroup", ungroup).icon("folder").params("group: id (its items go back to the folder)"),
+        .params("folder?: bodies|sketches|construction; component?: id (default 0); parent?: group id (the new group nests in it, taking its component and folder; at most 8 levels); name?; items?: [keys] (they leave other groups)"),
+    CommandSpec::new("browser.ungroup", "Ungroup", ungroup).icon("folder").params("group: id (its items and child groups go up to the group that holds it, or the folder)"),
     CommandSpec::new("browser.rename_group", "Rename Group", rename_group).icon("rename").params("group: id, name"),
     CommandSpec::new("browser.move", "Move Browser Items", move_items).icon("reorder")
-        .params("folder, component?, items: [keys]; group?: id (into it; omit to take them out of groups); before?: key (position in the group)"),
+        .params("folder, component?, items: [keys (strings) and group ids (numbers)]; group?: id (into it; omit for the folder's top level); before?: key or group id (position in it; default the end). A group cannot go into itself or past 8 levels"),
     CommandSpec::new("document.units", "Change Design Units", document_units)
         .icon("settings")
         .params("units: mm|cm|m|in|ft (display and unit-less parameters; values keep their meaning)"),
@@ -41,7 +41,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("view.apply", "Restore Named View", view_apply).icon("camera").noundo().params(
         "view?: front|back|top|bottom|left|right|iso|home (frames the model) | a named view's name; or camera?: {target: [x,y,z], yaw, pitch, distance, fov?, roll?} (radians, mm, about the up axis; yaw: heading of the line of sight, 0 along +Y (Front), π/2 along +X (Left), π (Back), −π/2 (Right); pitch: the eye's elevation, within ±π/2, π/2 = Top; roll defaults to 0, turns the picture clockwise, must be finite and is clamped to ±π; the View angles readout shows these in degrees; up is refused: the up axis comes from the design settings) → camera. The viewport (and the MCP screenshot) moves there. View state: not saved, not an undo step",
     ),
-    CommandSpec::new("browser.order", "Order Browser Items", order).icon("reorder").params("folder, component?, order: [keys] (the folder's items in display order)"),
+    CommandSpec::new("browser.order", "Order Browser Items", order).icon("reorder").params("folder: bodies|sketches|construction|components, component?, order: [keys (strings) and top-level group ids (numbers)] (display order; for `components`, the ids of the components placed in it)"),
     CommandSpec::new("browser.visibility", "Show/Hide", visibility).icon("eye").params(
         "visible: bool; items?: [sketch id or name | body name | construction name | joint name | O|X|Y|Z|XY|XZ|YZ]; \
          or joints?: [joint id or name] (their glyphs; they still constrain and move parts); \
@@ -98,11 +98,106 @@ fn group_id(s: &Session, p: &Value, cmd: &str) -> Result<u64> {
     if s.doc.browser_groups.iter().any(|g| g.id == id) { Ok(id) } else { Err(bad(cmd, format!("no group {id}"))) }
 }
 
+/// A list of groups (numbers) and items (strings): a number is always a group.
+fn entries(p: &Value, k: &str, cmd: &str) -> Result<Vec<BrowserEntry>> {
+    let list = match p.get(k) {
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|x| match x {
+                Value::String(s) => Some(BrowserEntry::Item(s.clone())),
+                _ => x.as_u64().map(BrowserEntry::Group),
+            })
+            .collect::<Option<Vec<_>>>(),
+        None => Some(Vec::new()),
+        _ => None,
+    };
+    let list = list.ok_or_else(|| bad(cmd, format!("`{k}` must be a list of item keys (strings) and group ids (numbers)")))?;
+    if list.len() > 10_000 || list.iter().any(|e| e.as_item().is_some_and(|k| k.is_empty() || k.len() > 256)) {
+        return Err(bad(cmd, format!("`{k}` has bad keys")));
+    }
+    Ok(list)
+}
+
+/// A number in a list of items or an order names a group; say so when there is none, as a sketch
+/// or plane id passed as a number is the likely mistake (item keys are strings).
+fn no_group(cmd: &str, id: u64) -> crate::EngineError {
+    bad(cmd, format!("no group {id} (a number is a group id; pass item keys as strings)"))
+}
+
+/// The group a command names under `key`, if it names one (`null` or absent: none).
+fn optional_group(s: &Session, p: &Value, key: &str, cmd: &str) -> Result<Option<u64>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => {
+            let id = v.as_u64().ok_or_else(|| bad(cmd, format!("`{key}` must be a group id")))?;
+            if s.doc.browser_group(id).is_some() { Ok(Some(id)) } else { Err(no_group(cmd, id)) }
+        }
+    }
+}
+
+/// The list a group's contents (or the folder's top level, `None`) are ordered by.
+fn holder_list<'a>(d: &'a mut solidcraft_doc::Document, component: u64, folder: &str, holder: Option<u64>) -> Option<&'a mut Vec<BrowserEntry>> {
+    match holder {
+        Some(g) => d.browser_groups.iter_mut().find(|x| x.id == g).map(|g| &mut g.items),
+        None => Some(d.browser_order.entry(format!("{component}/{folder}")).or_default()),
+    }
+}
+
+/// List the groups under `holder` that its list does not name yet, so a position among them can
+/// be found.
+fn settle(d: &mut solidcraft_doc::Document, component: u64, folder: &str, holder: Option<u64>) {
+    let children = d.child_groups(component, folder, holder);
+    if let Some(list) = holder_list(d, component, folder, holder) {
+        for c in children {
+            if !list.contains(&BrowserEntry::Group(c)) {
+                list.push(BrowserEntry::Group(c));
+            }
+        }
+    }
+}
+
+/// Take entries out of every list of a component's folder: its groups' and the top level's.
+fn take_out(d: &mut solidcraft_doc::Document, component: u64, folder: &str, gone: &[BrowserEntry]) {
+    for g in d.browser_groups.iter_mut().filter(|g| g.component == component && g.folder == folder) {
+        g.items.retain(|e| !gone.contains(e));
+    }
+    if let Some(list) = d.browser_order.get_mut(&format!("{component}/{folder}")) {
+        list.retain(|e| !gone.contains(e));
+        if list.is_empty() {
+            d.browser_order.remove(&format!("{component}/{folder}"));
+        }
+    }
+}
+
 fn group(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "browser.group";
-    let folder = folder_of(p, cmd)?;
-    let component = component_of(s, p, cmd)?;
-    let items = keys(p, "items", cmd)?;
+    let parent = optional_group(s, p, "parent", cmd)?;
+    let (mut component, mut folder) = (None, None);
+    if let Some(g) = parent.and_then(|g| s.doc.browser_group(g)) {
+        // Omitted, they come from the parent; given, they must agree with it.
+        if p.get("component").is_some() && component_of(s, p, cmd)? != g.component {
+            return Err(bad(cmd, "`parent` belongs to another component"));
+        }
+        if p.get("folder").is_some() && folder_of(p, cmd)? != g.folder {
+            return Err(bad(cmd, "`parent` belongs to another folder"));
+        }
+        if s.doc.group_level(g.id) >= MAX_GROUP_NESTING {
+            return Err(bad(cmd, format!("groups nest at most {MAX_GROUP_NESTING} levels")));
+        }
+        (component, folder) = (Some(g.component), Some(g.folder.clone()));
+    }
+    let folder = match folder {
+        Some(f) => f,
+        None => folder_of(p, cmd)?,
+    };
+    let component = match component {
+        Some(c) => c,
+        None => component_of(s, p, cmd)?,
+    };
+    let items = match entries(p, "items", cmd)?.into_iter().map(|e| e.as_item().map(str::to_string)).collect::<Option<Vec<_>>>() {
+        Some(items) => items,
+        None => return Err(bad(cmd, "`items` are item keys: move groups with browser.move")),
+    };
     let d = s.doc_mut();
     let id = d.allocate_id()?;
     let name = match str_(p, "name").map(str::trim).filter(|n| !n.is_empty()) {
@@ -110,16 +205,31 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad(cmd, "`name` is too long")),
         None => format!("Group{}", d.browser_groups.iter().filter(|g| g.folder == folder).count() + 1),
     };
-    for g in d.browser_groups.iter_mut().filter(|g| g.component == component && g.folder == folder) {
-        g.items.retain(|k| !items.contains(k));
-    }
-    d.browser_groups.push(solidcraft_doc::BrowserGroup { id, name: name.clone(), component, folder, items });
-    Ok(json!({ "group": id, "name": name }))
+    let gone: Vec<BrowserEntry> = items.iter().map(|k| BrowserEntry::item(k)).collect();
+    take_out(d, component, &folder, &gone);
+    let items = gone;
+    d.browser_groups.push(solidcraft_doc::BrowserGroup { id, name: name.clone(), component, folder, parent, items });
+    Ok(json!({ "group": id, "name": name, "parent": parent }))
 }
 
+/// A group's contents go up to the group that holds it (the folder's top level for a top-level
+/// group), in the place the group had; so do its child groups. Its own entry goes.
 fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
     let id = group_id(s, p, "browser.ungroup")?;
-    s.doc_mut().browser_groups.retain(|g| g.id != id);
+    let d = s.doc_mut();
+    let Some(g) = d.browser_group(id).cloned() else { return Ok(json!({ "group": id })) };
+    settle(d, g.component, &g.folder, Some(id));
+    let inside = d.browser_group(id).map(|g| g.items.clone()).unwrap_or_default();
+    for child in d.browser_groups.iter_mut().filter(|c| c.parent == Some(id)) {
+        child.parent = g.parent;
+    }
+    if let Some(list) = holder_list(d, g.component, &g.folder, g.parent)
+        && let Some(at) = list.iter().position(|e| *e == BrowserEntry::Group(id))
+    {
+        list.splice(at..=at, inside);
+    }
+    take_out(d, g.component, &g.folder, &[BrowserEntry::Group(id)]);
+    d.browser_groups.retain(|x| x.id != id);
     Ok(json!({ "group": id }))
 }
 
@@ -138,43 +248,91 @@ fn move_items(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "browser.move";
     let folder = folder_of(p, cmd)?;
     let component = component_of(s, p, cmd)?;
-    let items = keys(p, "items", cmd)?;
+    let items = entries(p, "items", cmd)?;
     if items.is_empty() {
-        return Err(bad(cmd, "`items` must list item keys"));
+        return Err(bad(cmd, "`items` must list item keys or group ids"));
     }
-    let to = match p.get("group") {
-        Some(Value::Null) | None => None,
-        Some(_) => Some(group_id(s, p, cmd)?),
-    };
+    let to = optional_group(s, p, "group", cmd)?;
     if let Some(g) = to
         && !s.doc.browser_groups.iter().any(|x| x.id == g && x.component == component && x.folder == folder)
     {
         return Err(bad(cmd, "that group is in another folder"));
     }
-    let before = str_(p, "before").map(str::to_string);
-    let d = s.doc_mut();
-    for g in d.browser_groups.iter_mut().filter(|g| g.component == component && g.folder == folder) {
-        g.items.retain(|k| !items.contains(k));
-        if Some(g.id) == to {
-            let at = before.as_ref().and_then(|b| g.items.iter().position(|k| k == b)).unwrap_or(g.items.len());
-            for (i, k) in items.iter().enumerate() {
-                g.items.insert(at + i, k.clone());
-            }
+    let to_level = to.map_or(0, |g| s.doc.group_level(g));
+    for e in &items {
+        let BrowserEntry::Group(id) = e else { continue };
+        let Some(g) = s.doc.browser_group(*id) else { return Err(no_group(cmd, *id)) };
+        if g.component != component || g.folder != folder {
+            return Err(bad(cmd, format!("group {id} is in another folder")));
         }
+        if to.is_some_and(|t| s.doc.group_within(t, *id)) {
+            return Err(bad(cmd, format!("group {id} cannot go inside itself")));
+        }
+        if to_level + s.doc.group_height(*id) > MAX_GROUP_NESTING {
+            return Err(bad(cmd, format!("groups nest at most {MAX_GROUP_NESTING} levels")));
+        }
+    }
+    let before = match p.get("before") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(k)) => Some(BrowserEntry::Item(k.clone())),
+        Some(v) => {
+            let id = v.as_u64().ok_or_else(|| bad(cmd, "`before` must be an item key or a group id"))?;
+            if s.doc.browser_group(id).is_none() {
+                return Err(no_group(cmd, id));
+            }
+            Some(BrowserEntry::Group(id))
+        }
+    };
+    let d = s.doc_mut();
+    // Where a group list is silent about its child groups, the ones it names come first: name
+    // them all, so `before` can be one of them.
+    settle(d, component, &folder, to);
+    take_out(d, component, &folder, &items);
+    for e in &items {
+        if let BrowserEntry::Group(id) = e
+            && let Some(g) = d.browser_groups.iter_mut().find(|g| g.id == *id)
+        {
+            g.parent = to;
+        }
+    }
+    if let Some(list) = holder_list(d, component, &folder, to) {
+        let at = before.as_ref().and_then(|b| list.iter().position(|e| e == b)).unwrap_or(list.len());
+        list.splice(at..at, items.iter().cloned());
     }
     Ok(json!({ "items": items, "group": to }))
 }
 
 fn order(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "browser.order";
-    let folder = folder_of(p, cmd)?;
     let component = component_of(s, p, cmd)?;
-    let order = keys(p, "order", cmd)?;
+    let components = str_(p, "folder") == Some("components");
+    let folder = if components { "components".to_string() } else { folder_of(p, cmd)? };
+    let order = entries(p, "order", cmd)?;
+    for e in &order {
+        match e {
+            // Sub-components, by placement id, all of them placed in this component.
+            BrowserEntry::Item(k) if components => {
+                let placed = k.parse::<u64>().ok().is_some_and(|o| s.doc.occurrences.iter().any(|x| x.id == o && x.parent == component));
+                if !placed {
+                    return Err(bad(cmd, "the `components` folder is ordered by the ids of the components placed in it"));
+                }
+            }
+            BrowserEntry::Item(_) => {}
+            BrowserEntry::Group(id) => match s.doc.browser_group(*id) {
+                None => return Err(no_group(cmd, *id)),
+                Some(g) if components || g.component != component || g.folder != folder || g.parent.is_some() => {
+                    return Err(bad(cmd, format!("group {id} is not a top-level group of this folder")));
+                }
+                Some(_) => {}
+            },
+        }
+    }
     let key = format!("{component}/{folder}");
     let d = s.doc_mut();
     if order.is_empty() {
         d.browser_order.remove(&key);
     } else {
+        // An item that sits in a group belongs to the group's list only.
         d.browser_order.insert(key, order);
     }
     Ok(json!({}))
@@ -2022,17 +2180,17 @@ mod tests {
         let g = run(&mut s, "browser.group", json!({"folder": "bodies", "items": [a.clone()]}))["group"].as_u64().unwrap();
         assert_eq!(s.doc.browser_groups[0].name, "Group1");
         run(&mut s, "browser.move", json!({"folder": "bodies", "items": [b.clone()], "group": g, "before": a.clone()}));
-        assert_eq!(s.doc.browser_groups[0].items, vec![b.clone(), a.clone()]);
+        assert_eq!(s.doc.browser_groups[0].items, vec![b.clone().into(), a.clone().into()]);
         run(&mut s, "browser.rename_group", json!({"group": g, "name": "Fasteners"}));
         run(&mut s, "body.rename", json!({"body": a, "name": "Bolt"}));
-        assert_eq!(s.doc.browser_groups[0].items, vec![b.clone(), "Bolt".to_string()]);
+        assert_eq!(s.doc.browser_groups[0].items, vec![b.clone().into(), "Bolt".into()]);
         // Out of the group, then a folder order; saved with the design.
         run(&mut s, "browser.move", json!({"folder": "bodies", "items": [b.clone()]}));
-        assert_eq!(s.doc.browser_groups[0].items, vec!["Bolt".to_string()]);
+        assert_eq!(s.doc.browser_groups[0].items, vec!["Bolt".into()]);
         run(&mut s, "browser.order", json!({"folder": "bodies", "order": [b.clone(), "Bolt"]}));
         let saved: solidcraft_doc::Document = serde_json::from_str(&serde_json::to_string(&*s.doc).unwrap()).unwrap();
         assert_eq!(saved.browser_groups, s.doc.browser_groups);
-        assert_eq!(saved.browser_order["0/bodies"], vec![b, "Bolt".to_string()]);
+        assert_eq!(saved.browser_order["0/bodies"], vec![b.into(), "Bolt".into()]);
         run(&mut s, "browser.ungroup", json!({"group": g}));
         assert!(s.doc.browser_groups.is_empty());
         // Hostile input is refused.

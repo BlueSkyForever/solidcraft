@@ -49,6 +49,10 @@ impl Model {
         for occurrence in &session.doc.occurrences {
             children.entry(occurrence.parent).or_default().push(occurrence.id);
         }
+        // Sub-components in the order the design saved for them; the rest follow in placement order.
+        for (parent, ids) in &mut children {
+            session.doc.sort_placements(*parent, ids);
+        }
         Self {
             doc: session.doc.clone(),
             state,

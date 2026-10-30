@@ -412,6 +412,8 @@ pub struct Session {
     /// Revision increments caused only by visibility. Comparing both counters proves that
     /// every intervening increment left an editor's document and model untouched.
     visibility_revision: u64,
+    /// [`Document::browser_stamp`] when the browser's groups and order were last checked.
+    browser_stamp: [u64; 6],
     /// This open design's id for programs that follow it (`document.revision`, #6646): kept
     /// while it stays open, through saves and renames; another for each design started or opened.
     pub document_id: String,
@@ -630,6 +632,7 @@ impl Session {
             log: Vec::new(),
             revision: 1,
             visibility_revision: 0,
+            browser_stamp: [0; 6],
             document_id: cmd::inspect::new_document_id(),
             followed: None,
             auto_project: true,
@@ -927,6 +930,15 @@ impl Session {
         }
         self.revision += 1;
         self.prune_occurrence_state();
+        // Looked at only when what the groups can name has changed, not on every refresh.
+        let stamp = self.doc.browser_stamp();
+        if stamp != self.browser_stamp {
+            if let Some((groups, order)) = self.doc.browser_pruned() {
+                let d = self.doc_mut();
+                (d.browser_groups, d.browser_order) = (groups, order);
+            }
+            self.browser_stamp = self.doc.browser_stamp();
+        }
         // Joints follow the geometry their origins snap to.
         if !self.doc.assembly.joints.is_empty() {
             // A solve that moves parts changes what features reading where a part is placed
@@ -1107,14 +1119,15 @@ impl Session {
         }
     }
 
-    /// Only persistent render intent, part properties or appearances changed. Never evaluate or
-    /// clear a stale model here.
+    /// Only persistent render intent, part properties, appearances or the browser's groups changed.
+    /// Never evaluate or clear a stale model here.
     fn render_only_change(&self, before: &Snapshot) -> bool {
         self.active_sketch == before.active_sketch
             && self.pending_moves == before.pending_moves
             && (self.doc.differs_only_in_render(&before.doc)
                 || self.doc.differs_only_in_part_properties(&before.doc)
-                || self.doc.differs_only_in_appearance(&before.doc))
+                || self.doc.differs_only_in_appearance(&before.doc)
+                || self.doc.differs_only_in_browser(&before.doc))
     }
 
     /// Only what is hidden or shown changed (`browser.visibility`): the document and the model
@@ -1481,6 +1494,7 @@ impl Session {
             log: Vec::new(),
             revision: self.revision,
             visibility_revision: self.visibility_revision,
+            browser_stamp: self.browser_stamp,
             document_id: self.document_id.clone(),
             followed: None,
             auto_project: self.auto_project,
