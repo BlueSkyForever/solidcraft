@@ -5449,7 +5449,31 @@ mod persistent_ribbon_tests {
             for shape in &h.shapes {
                 shapes(&shape.shape, &mut drawn);
             }
-            assert!(!drawn.iter().any(|shape| matches!(shape, egui::Shape::Rect(s) if s.rect == rect && s.fill == Tokens::get().selected_bg)));
+            let t = Tokens::get();
+            // The pointer still hovers this cell: native hover may share the selected fill.
+            // Persistence is distinguished by the underline, identity and native toggled state.
+            assert!(
+                drawn.iter().any(|shape| matches!(shape, egui::Shape::Rect(s) if s.rect == rect && s.fill == t.accent_soft)),
+                "{id} retains its normal hovered fill on release"
+            );
+            assert!(!drawn.iter().any(|shape| matches!(shape, egui::Shape::LineSegment { points, stroke } if stroke.width == 2.0 && stroke.color == t.accent && points[0].y == rect.bottom() - t.space_4 && rect.contains(points[0]))), "{id} has no persistent underline on release");
+            assert!(scenario::rect_of(&format!("ribbon_grid:pressed:{id}")).is_none(), "{id} has no published pressed identity on release");
+            let command = solidcraft_engine::find_command(id).unwrap();
+            let label = persistent_button_name(&h.app, command);
+            let node = h
+                .output
+                .accesskit_update
+                .as_ref()
+                .and_then(|tree| {
+                    tree.nodes.iter().find(|(_, node)| {
+                        node.role() == egui::accesskit::Role::Button
+                            && node.label() == Some(label.as_str())
+                            && node.bounds().is_some_and(|b| rect.contains(pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)))
+                    })
+                })
+                .map(|(_, node)| node)
+                .expect("the actual cleared grid button, distinguished from its pinned ribbon button by bounds");
+            assert_eq!(node.toggled(), Some(egui::accesskit::Toggled::False), "{id} grid accessibility is off on the release frame");
             assert_eq!(h.app.session.section.is_some(), id != "inspect.section");
             assert_eq!(h.app.session.analysis.is_some(), id != "inspect.zebra");
         }
