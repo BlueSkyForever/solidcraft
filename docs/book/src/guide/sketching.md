@@ -419,6 +419,9 @@ Measure shows the currently selected distance (centre, minimum or maximum) and s
 distances on the canvas. The component dimensions follow the world axes and remain visible
 until the Measure dialog closes. To hide these extra lines and labels, turn off
 **Preferences > Graphics > Show X/Y/Z distances**. The choice is saved between runs.
+Drag the distance or an X, Y or Z label to move it away from the part; a moved label keeps a
+line to what it measures. Double-click a label to put it back. Measuring other items starts the
+labels in their own places again.
 
 ### Reviewing mirror, pattern, and offset results
 

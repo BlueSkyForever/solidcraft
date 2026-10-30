@@ -302,6 +302,8 @@ crate::dialog_descriptor::dialog_descriptors! {
                 /// The measure chosen in the panel (centre, min or max); `None` follows the result's
                 /// own default (centre where a round item gives one).
                 show: Option<Shown>,
+                /// Where the labels in the view were dragged to (#8510).
+                labels: crate::canvas::MeasureLabels,
             },
             /// Move bodies by a distance along X, Y and Z.
             /// Move/Copy (see `dialogs_move`): the move type, X/Y/Z distances (Point to Position: the
@@ -925,7 +927,7 @@ impl Dialog {
                 vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)],
             ),
             "inspect.measure" => Dialog::new(
-                Kind::Measure { result: None, of: Vec::new(), show: None },
+                Kind::Measure { result: None, of: Vec::new(), show: None, labels: Default::default() },
                 vec![SelInput::new(
                     "Items",
                     FACES
@@ -2858,9 +2860,11 @@ pub(crate) fn fill_cells(st: &solidcraft_engine::doc::ModelState, tools: &[Strin
 /// Measure again when the picked items changed.
 fn update_measure(app: &SolveApp, d: &mut Dialog) {
     let items: Vec<Sel> = sels(d, 0).to_vec();
-    if let Kind::Measure { result, of, .. } = &mut d.kind
+    if let Kind::Measure { result, of, labels, .. } = &mut d.kind
         && *of != items
     {
+        // Another measurement: its labels start in their own places.
+        *labels = Default::default();
         *result = if items.is_empty() { None } else { Some(app.session.measure_items(&items)) };
         *of = items;
     }

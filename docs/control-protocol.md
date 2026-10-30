@@ -338,6 +338,9 @@ to hide them while keeping the total distance and the dialog's ΔX/ΔY/ΔZ value
 overlays remain visible until Measure closes.
 Overlay handles `measure:label:x`, `measure:label:y` and `measure:label:z` identify the extra
 labels; `prefs:measure_axis_distances` identifies the checkbox.
+A `ui.drag` from `measure:label` or one of the axis labels moves that label (screen offset, kept
+while the measured items stay the same; a double-click puts it back). It picks nothing and starts
+no box selection.
 
 ## UI
 
