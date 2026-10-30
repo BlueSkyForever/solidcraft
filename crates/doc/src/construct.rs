@@ -227,7 +227,7 @@ pub(crate) fn as_line(pts: &[Vec3]) -> Option<(Vec3, Vec3)> {
 }
 
 /// A polyline on a circle: (centre, unit normal, radius).
-fn as_circle(pts: &[Vec3]) -> Option<(Vec3, Vec3, f64)> {
+pub(crate) fn as_circle(pts: &[Vec3]) -> Option<(Vec3, Vec3, f64)> {
     let n = pts.len();
     if n < 4 {
         return None;

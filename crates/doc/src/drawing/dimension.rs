@@ -4,13 +4,16 @@
 //! model or says what it lost: it never moves to other geometry. Nothing worked out is saved: its
 //! value, its status and its last good value come from the model each time.
 //!
-//! - **Linear**: between two corners ([`ModelPoint`]), horizontal, vertical or aligned as the view
-//!   shows them, or along a direction on the view.
+//! - **Linear**: between two points ([`ModelPoint`]): corners, or the centres of circles and arcs
+//!   (a hole's), horizontal, vertical or aligned as the view shows them, or along a direction on
+//!   the view.
 //! - **Length**: a straight edge's ends ([`ModelEdge`]).
 //! - **Angle**: between two straight edges, the smaller angle between their lines, or on its other
 //!   side π minus it, whichever way the kernel runs the edges.
 //! - **Radial** (W20a): a circle's or an arc's radius, or its diameter, on a view that sees it face
 //!   on, read exactly from the body.
+//! - **Chain** (W20c): from each of its points to the next along one line, as the view shows them,
+//!   the members adding up to the overall from the first point to the last.
 //!
 //! A reference names its body, the feature that made the body (so a suppressed feature can be told
 //! from a deleted one) and its occurrence path (so a part placed twice has a dimension on each copy).
@@ -20,16 +23,19 @@
 //!
 //! The rules, beside the record's: a dimension is on one of the drawing's views; a reference names
 //! a body and its feature, and 1 to [`MAX_REFERENCE_NAME_BYTES`] bytes in each name, without control
-//! characters; a corner names 2 to [`MAX_VERTEX_EDGES`] edges; an occurrence path is at most
-//! [`MAX_PLACEMENT_DEPTH`] ids, none 0; a true length is measured aligned; a direction to measure
-//! along isn't zero, and is at most [`MAX_REAL`] each way, as every number a drawing saves (a whole
-//! number past it reads, then saves as one the file's check refuses); the offset and the text place
-//! are on paper ([`is_paper_coordinate`]); at most [`MAX_DECIMALS`] decimals; an override text of 1
-//! to [`MAX_TEXT_BYTES`] bytes; at most [`MAX_DIMENSIONS`] dimensions, listed by id.
+//! characters; a corner names 2 to [`MAX_VERTEX_EDGES`] edges, a centre one; a chain has 3 to
+//! [`MAX_CHAIN_POINTS`] points and shows its members' numbers, never a text instead; an occurrence
+//! path is at most [`MAX_PLACEMENT_DEPTH`] ids, none 0; a true length is measured aligned; a
+//! direction to measure along isn't zero, and is at most [`MAX_REAL`] each way, as every number a
+//! drawing saves (a whole number past it reads, then saves as one the file's check refuses); the
+//! offset and the text place are on paper ([`is_paper_coordinate`]); at most [`MAX_DECIMALS`]
+//! decimals; an override text of 1 to [`MAX_TEXT_BYTES`] bytes; at most [`MAX_DIMENSIONS`]
+//! dimensions, listed by id.
 //!
 //! [`Document::resolve_dimensions`] finds what a dimension measures again, strictly: an edge by
 //! its name, or the one edge between the faces it names, never the piece nearest an old pick; a
-//! corner where all its named edges meet, never the nearer of two. What it can't decide it says
+//! corner where all its named edges meet, never the nearer of two; a centre the centre of its one
+//! named edge, which must be a circle or an arc. What it can't decide it says
 //! ([`Status`]), and it never chooses. [`Document::edge_reference`] and
 //! [`Document::corner_reference`] turn what a command picks (a point, or an edge's index) into
 //! those names, and refuse a pick that doesn't name one thing.
@@ -46,7 +52,7 @@ use solidcraft_geom::{Plane, Seg2, Vec2, Vec3};
 
 use super::{Drawing, Units, add_by_id, in_id_order, require};
 use crate::config::MAX_REFERENCE_NAME_BYTES;
-use crate::construct::{MAX_VERTEX_EDGES, as_line, point_tolerance, shared_ends};
+use crate::construct::{MAX_VERTEX_EDGES, as_circle, as_line, point_tolerance, shared_ends};
 use crate::display_units::length_number;
 use crate::format::MAX_REAL;
 use crate::name_lookup::{BodyEdges, EdgeMatch};
@@ -60,6 +66,8 @@ pub const MAX_DECIMALS: u8 = 6;
 pub const MAX_CANDIDATES: usize = 16;
 /// The longest text shown instead of a dimension's number, in bytes.
 pub const MAX_TEXT_BYTES: usize = 1024;
+/// The most points a chain of dimensions runs through.
+pub const MAX_CHAIN_POINTS: usize = 64;
 /// What a diameter's number follows: Ø (U+00D8), as tolerance texts write it. The diameter sign
 /// U+2300 isn't in the bundled fonts, so it would print as a missing glyph.
 const DIAMETER_SIGN: &str = "Ø";
@@ -108,6 +116,8 @@ pub enum DimensionKind {
         #[serde(default, skip_serializing_if = "is_false")]
         diameter: bool,
     },
+    /// The distances from each point to the next, in order along one line as the view shows them.
+    Chain { points: Vec<ModelPoint>, direction: LinearDirection },
 }
 
 /// An edge of a body, by its persistent name.
@@ -123,15 +133,19 @@ pub struct ModelEdge {
     pub path: Vec<u64>,
 }
 
-/// A corner of a body: the end its named edges share.
+/// A point of a body: a corner, the end its named edges share, or with `centre` the centre of the
+/// circle or arc its one named edge is.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelPoint {
     pub body: String,
     /// The feature that made the body.
     pub origin_feature: u64,
-    /// The persistent names of the edges that meet there.
+    /// The persistent names of the edges that meet there, or of the circle or arc.
     pub edges: Vec<String>,
+    /// The centre of the circle or arc `edges` names, not a corner.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub centre: bool,
     /// As [`ModelEdge::path`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub path: Vec<u64>,
@@ -197,6 +211,13 @@ impl Drawing {
                 check_edge(b)?;
             }
             DimensionKind::Radial { edge, .. } => check_edge(edge)?,
+            DimensionKind::Chain { points, direction } => {
+                check_chain_length(points.len())?;
+                points.iter().try_for_each(check_point)?;
+                check_direction(*direction, Reading::Projected)?;
+                let instead = || "a chain shows its members' numbers, never a text instead".into();
+                require(d.override_text.is_none(), instead)?;
+            }
         }
         let off_paper = || format!("its offset and its text's place are at most {MAX_SIDE_MM} mm on paper");
         let text = match d.text {
@@ -214,16 +235,25 @@ impl Drawing {
     }
 }
 
+/// A chain's number of points: 3 (2 make a linear dimension) to [`MAX_CHAIN_POINTS`].
+pub fn check_chain_length(points: usize) -> Result<()> {
+    require((3..=MAX_CHAIN_POINTS).contains(&points), || format!("a chain has 3 to {MAX_CHAIN_POINTS} points"))
+}
+
 /// An edge reference's rules (a balloon's edge keeps them too).
 pub(super) fn check_edge(edge: &ModelEdge) -> Result<()> {
     check_body(&edge.body, edge.origin_feature, &edge.path)?;
     check_reference_name(&edge.name)
 }
 
-/// A corner reference's rules.
+/// A point reference's rules.
 fn check_point(point: &ModelPoint) -> Result<()> {
     check_body(&point.body, point.origin_feature, &point.path)?;
-    require((2..=MAX_VERTEX_EDGES).contains(&point.edges.len()), || format!("a corner is where 2 to {MAX_VERTEX_EDGES} named edges meet"))?;
+    if point.centre {
+        require(point.edges.len() == 1, || "a centre is of one named circle or arc".into())?;
+    } else {
+        require((2..=MAX_VERTEX_EDGES).contains(&point.edges.len()), || format!("a corner is where 2 to {MAX_VERTEX_EDGES} named edges meet"))?;
+    }
     point.edges.iter().try_for_each(|name| check_reference_name(name))
 }
 
@@ -264,14 +294,25 @@ pub struct Resolved {
     pub measured: Option<Measured>,
     /// What it shows: the text given instead of its number, else the number in the drawing's
     /// units with its decimals (degrees for an angle, after R or Ø for a radius or a diameter).
-    /// `None` with neither.
+    /// `None` with neither, and for a chain, which shows its members'.
     pub text: Option<String>,
+    /// A chain's members, from its first point to its last, each as it reads and its text: empty
+    /// unless measured, and for other kinds. `measured` is then the chain's overall.
+    pub members: Vec<Member>,
     /// Every name it measures was found by exact history, each as one edge.
     pub exact: bool,
     /// What it measures, in the design's frame: a linear dimension's two points, an angle's two
-    /// lines (four points, each line from its first to its second), or a radial dimension's
-    /// centre and its arc's start, middle and end. Empty unless measured.
+    /// lines (four points, each line from its first to its second), a radial dimension's
+    /// centre and its arc's start, middle and end, or a chain's points. Empty unless measured.
     pub points: Vec<Vec3>,
+}
+
+/// One of a chain's members as the model has it now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Member {
+    pub measured: Measured,
+    /// Its number in the drawing's units with the chain's decimals.
+    pub text: String,
 }
 
 /// Where a dimension, or a balloon's edge, stands with the model.
@@ -312,13 +353,15 @@ pub enum EdgePick {
     Index { body: String, index: usize },
 }
 
-/// How a command names a corner to measure ([`Document::corner_reference`]).
+/// How a command names a point to measure ([`Document::corner_reference`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum CornerPick {
     /// The corner, in the design's frame.
     Point(Vec3),
     /// Edges that meet there.
     Edges(Vec<EdgePick>),
+    /// The centre of a circle or an arc: the edge.
+    Centre(EdgePick),
 }
 
 impl Document {
@@ -332,9 +375,10 @@ impl Document {
         Ok(ModelEdge { body, origin_feature, name: names.remove(0), path: path.to_vec() })
     }
 
-    /// The corner `pick` names, as [`Document::edge_reference`] names an edge: by the edges that
-    /// meet there. A point must be the end of 2 to [`MAX_VERTEX_EDGES`] edges of one body, and
-    /// edges given must meet at one point.
+    /// The point `pick` names, as [`Document::edge_reference`] names an edge: a corner by the edges
+    /// that meet there, a centre by its circle or arc. A point must be the end of 2 to
+    /// [`MAX_VERTEX_EDGES`] edges of one body, edges given must meet at one point, and a centre's
+    /// edge must be a circle or an arc.
     pub fn corner_reference(&self, model: &Model, pick: &CornerPick, path: &[u64]) -> Result<ModelPoint> {
         let mut picker = Picker::new(self, model, path);
         let (body, edges) = match pick {
@@ -348,9 +392,15 @@ impl Document {
                 picker.meeting(body, &edges)?;
                 (body, edges)
             }
+            CornerPick::Centre(pick) => {
+                let (body, edge) = picker.edge(pick)?;
+                picker.round(body, edge)?;
+                (body, vec![edge])
+            }
         };
+        let centre = matches!(pick, CornerPick::Centre(_));
         let (body, origin_feature, edges) = picker.names(body, &edges)?;
-        Ok(ModelPoint { body, origin_feature, edges, path: path.to_vec() })
+        Ok(ModelPoint { body, origin_feature, edges, centre, path: path.to_vec() })
     }
 
     /// The dimensions `wanted` of `drawing` (one of this design's drawings) as `model` (this
@@ -385,9 +435,10 @@ pub(super) struct Lookup<'a> {
     named: BTreeMap<usize, BodyEdges>,
 }
 
-/// What a dimension measures, found and measured.
+/// What a dimension measures, found and measured: a chain's overall, and its members.
 struct Found {
     measured: Measured,
+    members: Vec<Measured>,
     points: Vec<Vec3>,
     exact: bool,
 }
@@ -414,19 +465,23 @@ impl<'a> Lookup<'a> {
             Err(status) => (status, None),
         };
         let measured = found.as_ref().map(|f| f.measured);
+        let length = |m: Measured| length_number(m.value, units, d.decimals);
         let number = |m: Measured| match d.kind {
-            DimensionKind::Angle { .. } => format!("{:.*}°", usize::from(d.decimals), m.value.to_degrees()),
+            DimensionKind::Angle { .. } => Some(format!("{:.*}°", usize::from(d.decimals), m.value.to_degrees())),
             DimensionKind::Radial { diameter, .. } => {
                 let symbol = if diameter { DIAMETER_SIGN } else { "R" };
-                format!("{symbol}{}", length_number(m.value, units, d.decimals))
+                Some(format!("{symbol}{}", length(m)))
             }
-            _ => length_number(m.value, units, d.decimals),
+            DimensionKind::Chain { .. } => None,
+            _ => Some(length(m)),
         };
+        let (members, points, exact) = found.map_or_else(Default::default, |f| (f.members, f.points, f.exact));
         Resolved {
             status,
-            text: d.override_text.clone().or_else(|| measured.map(number)),
-            exact: found.as_ref().is_some_and(|f| f.exact),
-            points: found.map_or_else(Vec::new, |f| f.points),
+            text: d.override_text.clone().or_else(|| measured.and_then(number)),
+            members: members.into_iter().map(|m| Member { measured: m, text: length(m) }).collect(),
+            exact,
+            points,
             measured,
         }
     }
@@ -439,7 +494,7 @@ impl<'a> Lookup<'a> {
                 let (a, exact_a) = self.corner(a)?;
                 let (b, exact_b) = self.corner(b)?;
                 let measured = drawing_measure::linear(basis, a, b, *direction, *reading).map_err(unmeasurable)?;
-                Ok(Found { measured, points: vec![a, b], exact: exact_a && exact_b })
+                Ok(Found { measured, members: Vec::new(), points: vec![a, b], exact: exact_a && exact_b })
             }
             DimensionKind::Length { edge, direction, reading } => {
                 let found = self.edges(edge)?;
@@ -450,14 +505,15 @@ impl<'a> Lookup<'a> {
                 let ends = found.pieces.first().and_then(|(_, line)| straight(line));
                 let [a, b] = ends.ok_or_else(|| Status::Unmeasurable(format!("edge `{}` isn't straight", edge.name)))?;
                 let measured = drawing_measure::linear(basis, a, b, *direction, *reading).map_err(unmeasurable)?;
-                Ok(Found { measured, points: vec![a, b], exact: found.exact })
+                Ok(Found { measured, members: Vec::new(), points: vec![a, b], exact: found.exact })
             }
             DimensionKind::Angle { a, b, reading, other_side } => {
                 let (a, exact_a) = self.line(a)?;
                 let (b, exact_b) = self.line(b)?;
                 let between = drawing_measure::angle(basis, (a[0], a[1]), AngleFrom::Edge(b[0], b[1]), *reading).map_err(unmeasurable)?;
                 let value = between_lines(between.value, *other_side);
-                Ok(Found { measured: Measured { value, ..between }, points: vec![a[0], a[1], b[0], b[1]], exact: exact_a && exact_b })
+                let points = vec![a[0], a[1], b[0], b[1]];
+                Ok(Found { measured: Measured { value, ..between }, members: Vec::new(), points, exact: exact_a && exact_b })
             }
             DimensionKind::Radial { edge, diameter } => {
                 let found = self.edges(edge)?;
@@ -467,7 +523,15 @@ impl<'a> Lookup<'a> {
                 }
                 let (radius, points) = self.arc(edge, &found, basis)?;
                 let value = if *diameter { 2.0 * radius } else { radius };
-                Ok(Found { measured: Measured { value, foreshortened: false }, points: points.to_vec(), exact: found.exact })
+                let measured = Measured { value, foreshortened: false };
+                Ok(Found { measured, members: Vec::new(), points: points.to_vec(), exact: found.exact })
+            }
+            DimensionKind::Chain { points, direction } => {
+                let found = points.iter().map(|p| self.corner(p)).collect::<std::result::Result<Vec<_>, _>>()?;
+                let exact = found.iter().all(|(_, exact)| *exact);
+                let points: Vec<Vec3> = found.into_iter().map(|(p, _)| p).collect();
+                let chain = drawing_measure::chain(basis, &points, *direction).map_err(unmeasurable)?;
+                Ok(Found { measured: chain.overall, members: chain.members, points, exact })
             }
         }
     }
@@ -541,9 +605,12 @@ impl<'a> Lookup<'a> {
         }
     }
 
-    /// The corner `point` names: the one end all its named edges (or their pieces) share, in the
-    /// design's frame.
+    /// The point `point` names, in the design's frame: a corner, the one end all its named edges
+    /// (or their pieces) share, or a centre.
     fn corner(&mut self, point: &ModelPoint) -> std::result::Result<(Vec3, bool), Status> {
+        if point.centre {
+            return self.centre(point);
+        }
         let (i, frame) = self.body(&point.body, point.origin_feature, &point.path)?;
         let names = self.names(i)?;
         let mut exact = true;
@@ -563,6 +630,21 @@ impl<'a> Lookup<'a> {
             [p] => Ok((apply_point(&frame, *p), exact)),
             several => Err(Status::Ambiguous(several.iter().take(MAX_CANDIDATES).map(|p| Candidate::Corner(apply_point(&frame, *p))).collect())),
         }
+    }
+
+    /// The centre `point` names: of the circle or arc its one named edge is, whole, as construction
+    /// geometry finds a round edge's ([`as_circle`]).
+    fn centre(&mut self, point: &ModelPoint) -> std::result::Result<(Vec3, bool), Status> {
+        let name = point.edges.first().ok_or_else(|| Status::Lost("its centre names no edge".into()))?;
+        let edge = ModelEdge { body: point.body.clone(), origin_feature: point.origin_feature, name: name.clone(), path: point.path.clone() };
+        let found = self.edges(&edge)?;
+        // A split edge is several arcs.
+        if !found.whole {
+            return Err(Status::Ambiguous(edge_candidates(&edge.body, &found)));
+        }
+        let round = found.pieces.first().and_then(|(_, line)| as_circle(line));
+        let (centre, ..) = round.ok_or_else(|| Status::Unmeasurable(format!("edge `{name}` isn't a circle or an arc")))?;
+        Ok((centre, found.exact))
     }
 }
 
@@ -648,6 +730,12 @@ impl<'a> Picker<'a> {
             }
             None => Err(DocError::Invalid(format!("no corner at {corner}"))),
         }
+    }
+
+    /// Body `body`'s edge `edge` is a circle or an arc.
+    fn round(&mut self, body: usize, edge: usize) -> Result<()> {
+        let round = self.placed(body).and_then(|lines| lines.get(edge)).is_some_and(|line| as_circle(line).is_some());
+        require(round, || format!("edge {edge} isn't a circle or an arc: a centre is a circle's or an arc's"))
     }
 
     /// Body `body`'s `edges` meet at one point.

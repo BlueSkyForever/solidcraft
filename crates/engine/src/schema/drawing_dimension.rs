@@ -22,7 +22,7 @@ use crate::params;
 const MAX_LISTED_EDGES: usize = 64;
 
 const EDGE: &str = "an edge is a point on it [x, y, z], or {point} or {body, index}, with path?";
-const CORNER: &str = "a corner is a point [x, y, z], or {point} or {edges: [edges]}, with path?";
+const CORNER: &str = "a corner is a point [x, y, z], or {point} or {edges: [edges]} or {centre: a circle or an arc}, with path?";
 
 /// An edge to measure: what picks it, and the occurrences its body is placed through.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,11 +77,13 @@ fn corner_param(v: &Value) -> Result<CornerParam, String> {
     if let Some(p) = params::vec3(v) {
         return Ok(CornerParam { pick: CornerPick::Point(p), path: Vec::new() });
     }
-    let o = keys(v, &["point", "edges", "path"], CORNER)?;
+    let o = keys(v, &["point", "edges", "centre", "path"], CORNER)?;
     let path = path(o.get("path"))?;
-    let pick = match (o.get("point"), o.get("edges")) {
-        (Some(p), None) => CornerPick::Point(params::vec3(p).ok_or(CORNER)?),
-        (None, Some(edges)) => {
+    let pick = match (o.get("point"), o.get("edges"), o.get("centre")) {
+        (Some(p), None, None) => CornerPick::Point(params::vec3(p).ok_or(CORNER)?),
+        // The centre's edge is on the point's body, so it has no path of its own.
+        (None, None, Some(edge)) if edge.get("path").is_none() => CornerPick::Centre(edge_pick(edge)?),
+        (None, Some(edges), None) => {
             let listed = || format!("a corner's `edges` lists 2 to {MAX_LISTED_EDGES} edges, each without a path of its own");
             let edges = edges.as_array().filter(|l| l.len() <= MAX_LISTED_EDGES).ok_or_else(listed)?;
             let own_path = edges.iter().any(|e| e.get("path").is_some());
@@ -125,7 +127,7 @@ impl JsonSchema for CornerParam {
     }
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
-            "description": "A corner: a point [x, y, z] in the design's frame, or {point} or {edges: [2 to 16 edges that meet there]}, with path? as an edge's.",
+            "description": "A corner: a point [x, y, z] in the design's frame, or {point} or {edges: [2 to 16 edges that meet there]}, or {centre: an edge that is a circle or an arc} for its centre (a hole's), with path? as an edge's.",
             "anyOf": [{"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}, {"type": "object"}]
         })
     }
@@ -201,6 +203,15 @@ pub enum KindParam {
         #[schemars(with = "bool")]
         diameter: Option<bool>,
     },
+    /// The distances from each point to the next, in order along one line as the view shows them.
+    Chain {
+        /// 3 to 64 corners.
+        points: Vec<CornerParam>,
+        /// As a linear dimension's; `aligned` (the default) is from the first point to the last.
+        #[serde(default, deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
+        #[schemars(with = "Value")]
+        direction: Option<LinearDirection>,
+    },
 }
 
 /// What `drawing.dimension.add` takes.
@@ -265,7 +276,7 @@ pub struct DimensionSet {
     /// Text shown instead of the number, or `null` to show the number again.
     #[serde(deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
     pub override_text: Option<Option<String>>,
-    /// A linear or length dimension's.
+    /// A linear, length or chain dimension's.
     #[serde(deserialize_with = "super::present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Value")]
     pub direction: Option<LinearDirection>,
@@ -302,6 +313,14 @@ pub enum CandidateResult {
     Corner([f64; 3]),
 }
 
+/// One of a chain's members as the model has it now.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MemberResult {
+    /// Model millimetres.
+    pub value: f64,
+    pub text: String,
+}
+
 /// A dimension as the model has it now.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct DimensionResult {
@@ -314,15 +333,19 @@ pub struct DimensionResult {
     /// Why it is lost or unmeasurable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub why: Option<String>,
-    /// What it reads: model millimetres, or degrees for an angle.
+    /// What it reads: model millimetres, or degrees for an angle; a chain's overall.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<f64>,
     /// Whether a measured line leaves the view's plane, so the view shows it shorter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub foreshortened: Option<bool>,
-    /// What it shows: the text given, else the number in the drawing's units.
+    /// What it shows: the text given, else the number in the drawing's units; none for a chain,
+    /// which shows its members'.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// A chain's members, from its first point to its last.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<MemberResult>,
     /// When it has no value now: the last one it read this session, as `value` gives it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_good: Option<f64>,
