@@ -241,7 +241,7 @@ pub fn begin(app: &mut SolveApp, path: &str, insert: bool) {
 
 /// Queue a file operation; on the web (no threads) it runs now.
 pub fn begin_request(app: &mut SolveApp, request: Request) -> Result<(), String> {
-    if app.file_load.idle() && reuse_open(app, &request) {
+    if !app.file_picker_busy() && app.file_load.idle() && reuse_open(app, &request) {
         return Ok(());
     }
     #[cfg(target_arch = "wasm32")]
@@ -401,7 +401,7 @@ fn recovered(app: &mut SolveApp, request: &Request) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn start(app: &mut SolveApp) {
-    if app.file_load.running.is_some() {
+    if app.file_load.running.is_some() || app.file_picker_busy() {
         return;
     }
     let Some(request) = app.file_load.queued.pop_front() else { return };
@@ -544,7 +544,7 @@ fn start(app: &mut SolveApp) {
 /// Start the next queued STEP file as a [`Staged`] import (see [`step_staged`]).
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn start_staged(app: &mut SolveApp) {
-    if app.file_load.running.is_some() {
+    if app.file_load.running.is_some() || app.file_picker_busy() {
         return;
     }
     let Some(request) = app.file_load.queued.pop_front() else { return };
