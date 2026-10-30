@@ -366,8 +366,8 @@ pub fn active_is_blank(app: &SolveApp) -> bool {
 }
 
 /// Show `session` (a design built or read elsewhere): in place of a blank active design,
-/// otherwise in a new tab.
-pub fn adopt(app: &mut SolveApp, session: Session) {
+/// otherwise in a new tab. Whether it is shown (no tab left for it: the status says so).
+pub fn adopt(app: &mut SolveApp, session: Session) -> bool {
     if active_is_blank(app) {
         let rev = app.session.revision;
         reset_chat(app);
@@ -383,8 +383,12 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
         app.session.invalidate_view(rev);
         app.cam = Camera::default();
         app.fit_view();
+        true
     } else if let Err(e) = open_tab(app, session) {
         app.set_status(e, true);
+        false
+    } else {
+        true
     }
 }
 
