@@ -130,7 +130,7 @@ fn pictures_drawn_at_once_each_count_their_own() {
     let Some(c) = capturer() else { return };
     let scene = |s: &Session| {
         let cam = view::home_camera(s);
-        (view::scene_with_guides(s, &cam, None, Guides { grid: false, axes: false }), cam)
+        (view::scene_with_guides(s, &cam, &[], Guides { grid: false, axes: false }), cam)
     };
     let empty = scene(&Session::default());
     let solid = scene(&session(&[("solid.box", json!({"length": 40, "width": 30, "height": 20}))]));
@@ -145,6 +145,28 @@ fn pictures_drawn_at_once_each_count_their_own() {
             });
         }
     });
+}
+
+/// A section draws each face three times (marking the cap, pushing its depth back, the cap's
+/// depth), and with a second plane twice more (the count of bodies behind the cut and the hole
+/// it fills): with one plane those find nothing to draw, so they are not drawn.
+#[test]
+fn one_section_plane_draws_no_count_or_hole() {
+    let Some(c) = capturer() else { return };
+    let mut s = session(&[("solid.box", json!({"length": 40, "width": 30, "height": 20}))]);
+    let drawn = |s: &Session| {
+        let cam = view::home_camera(s);
+        let scene = view::scene_with_guides(s, &cam, &s.section, Guides { grid: false, axes: false });
+        let triangles: usize = scene.meshes.iter().map(|m| m.mesh.triangles.len()).sum();
+        let (_, stats) = c.rgba_with_stats(&scene, &cam, 160, 100).unwrap();
+        (stats.triangles, triangles as u64)
+    };
+    let (none, n) = drawn(&s);
+    s.execute("inspect.section", &json!({"plane": {"origin": [0, 15, 0], "normal": [0, -1, 0]}})).unwrap();
+    let (one, _) = drawn(&s);
+    s.execute("inspect.section", &json!({"plane": {"origin": [20, 0, 0], "normal": [1, 0, 0]}, "add": true})).unwrap();
+    let (two, _) = drawn(&s);
+    assert_eq!((one - none, two - one), (2 * n, 2 * n), "{none}, {one} and {two} triangles drawn for {n}");
 }
 
 /// The ground grid and the origin's axes each change the picture.

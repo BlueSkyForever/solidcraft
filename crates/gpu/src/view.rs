@@ -169,8 +169,8 @@ pub struct PlannedBody {
 }
 
 /// What the viewport's last frame drew, counted as it was drawn (the performance overlay, #2548).
-/// Triangles and line segments count every pass that draws them, so a section's stencil passes
-/// count twice; that is the work the GPU did.
+/// Triangles and line segments count every pass that draws them, so a section's passes count
+/// each face three times (five with two planes or more); that is the work the GPU did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DrawStats {
     pub draw_calls: u32,
@@ -3672,7 +3672,11 @@ impl Renderer {
                     d.draw(pass, smooth, flat, tally);
                 }
             };
-        let sectioned = cb.clip[0][..3].iter().map(|c| c * c).sum::<f32>() > 0.25;
+        let shown = |c: &[f32; 4]| c[..3].iter().map(|v| v * v).sum::<f32>() > 0.25;
+        let sectioned = shown(&cb.clip[0]);
+        // One plane keeps the whole of a ray past where it comes in, so no hidden face lies past
+        // it: the count and the hole draw nothing.
+        let holes = cb.clip.iter().filter(|c| shown(c)).count() > 1;
         match (
             res.tri_cut.as_ref().filter(|_| sectioned),
             res.tri_cut_planned.as_ref(),
@@ -3696,9 +3700,13 @@ impl Renderer {
                 pass.set_pipeline(clear);
                 pass.draw(0..3, 0..1);
                 tally.call();
-                all(pass, |c| &c.count);
+                if holes {
+                    all(pass, |c| &c.count);
+                }
                 all(pass, |c| &c.mark);
-                all(pass, |c| &c.hole);
+                if holes {
+                    all(pass, |c| &c.hole);
+                }
                 pass.set_pipeline(reset);
                 pass.draw(0..3, 0..1);
                 tally.call();
