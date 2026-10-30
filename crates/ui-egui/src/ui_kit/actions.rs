@@ -482,6 +482,16 @@ pub fn button(ui: &mut Ui, label: impl Into<egui::WidgetText>, options: Button) 
     response
 }
 
+/// A small button whose label is cut short with "…" when its row has no room for all of it.
+/// Tokens: shared button colours.
+pub(crate) fn small_button_truncated(ui: &mut Ui, label: &str) -> Response {
+    let response = ui.add(button_widget(label.into(), Button::Small).truncate());
+    Tokens::get().button_bevel(ui, &response, false);
+    pointer_on_hover(ui, &response);
+    publish_button(ui, &response, label);
+    response
+}
+
 /// The same button at an existing rectangle, with stable identity and centred native text.
 /// Tokens: shared button colours; caller supplies its token-sized rectangle and optional typography.
 pub(crate) fn button_at(ui: &mut Ui, id: &str, rect: egui::Rect, label: impl Into<egui::WidgetText>, options: Button) -> Response {

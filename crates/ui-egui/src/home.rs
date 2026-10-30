@@ -135,10 +135,14 @@ pub fn thumbnail(s: &Session) -> Option<egui::ColorImage> {
     cam.fit(&b);
     // Fill the card: the fit leaves room for a whole window's margins.
     cam.distance *= 0.7;
-    let scene = solidcraft_engine::view::scene(s, &cam);
-    // Drawn on the GPU by the renderer the app installs; none (a browser): no picture.
+    let mut scene = solidcraft_engine::view::scene(s, &cam);
+    // The part alone, over transparent pixels: the card's own tile shows behind it.
+    scene.transparent = true;
+    scene.grid.clear();
+    // Drawn on the GPU by the renderer the app installs; none (a browser): no picture. Over
+    // transparent black, the edges come back premultiplied.
     let picture = solidcraft_engine::capture::rgba(&scene, &cam, THUMB[0] as u32, THUMB[1] as u32).ok()?;
-    Some(egui::ColorImage::from_rgba_unmultiplied(THUMB, &picture.rgba))
+    Some(egui::ColorImage::from_rgba_premultiplied(THUMB, &picture.rgba))
 }
 
 /// File identity, not just its path: saving or replacing a design invalidates its picture.
@@ -148,6 +152,8 @@ fn cache_path(key: &str) -> Option<std::path::PathBuf> {
     let meta = std::fs::metadata(key).ok()?;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     key.hash(&mut h);
+    // Pictures drawn over transparent pixels (2): the opaque ones before are drawn again.
+    2u8.hash(&mut h);
     meta.len().hash(&mut h);
     meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.hash(&mut h);
     let root = std::env::var_os("LOCALAPPDATA")
@@ -280,6 +286,18 @@ pub(crate) fn install(h: &mut HomeState, ctx: &egui::Context, key: &str, img: Op
             h.failed.insert(key.to_string());
         }
     }
+}
+
+/// A file's picture for the parts library: a stored one, else made by opening the file (on a
+/// worker thread).
+pub(crate) fn picture_of(key: &str) -> Option<egui::ColorImage> {
+    picture(key).or_else(|| make(key).1)
+}
+
+/// Upload a picture into a texture map (the parts library's).
+pub(crate) fn install_texture(map: &mut HashMap<String, Option<egui::TextureHandle>>, ctx: &egui::Context, key: &str, img: Option<egui::ColorImage>) {
+    let tex = img.map(|i| ctx.load_texture(format!("library:{key}"), i, egui::TextureOptions::LINEAR));
+    map.insert(key.to_string(), tex);
 }
 
 /// Read a disposable picture without evaluating, importing or meshing a model.

@@ -101,6 +101,7 @@ pub mod joint_drag;
 pub(crate) mod joint_handles;
 pub mod keymap;
 mod length_input;
+pub mod library;
 mod linked_source;
 #[cfg(test)]
 mod loft_rails_dialog_tests;
@@ -400,6 +401,8 @@ pub struct Services {
     pub pick_file: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// Open a dialog asking for a folder (the parts library's); `None` when the host has none.
+    pub pick_folder: Option<Box<dyn Fn() -> FilePickerFuture>>,
     pub show_in_folder: Option<Box<dyn Fn(&str)>>,
     /// Where the host reads the anti-aliasing preference at start (a small JSON file).
     pub graphics_path: Option<String>,
@@ -661,6 +664,8 @@ pub struct SolveApp {
     pub flat_view: dialogs_sheet::FlatView,
     /// The start page.
     pub home: home::HomeState,
+    /// The parts library panel's folder listing and pictures.
+    pub library: library::LibraryState,
     /// The 3D mouse: which device, its reading, and the calibration window.
     pub space_mouse: space_mouse::Input,
     pub file_load: file_load::FileLoad,
@@ -815,6 +820,7 @@ impl SolveApp {
             flat_view: Default::default(),
             embedded: false,
             home: home::HomeState::default(),
+            library: library::LibraryState::default(),
             space_mouse: Default::default(),
             file_load: file_load::FileLoad::default(),
             open_meshing: None,
@@ -2388,6 +2394,7 @@ impl SolveApp {
         easyprint_ui::tick(self, ctx);
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
+        library::tick(self, ctx);
         file_load::tick(self, ctx);
         save_job::tick(self, false);
         edit_in_place::tick(self);
@@ -2628,7 +2635,7 @@ impl SolveApp {
                 // A dialog in the left column holds the History's place.
                 (!dialog_column::holds(self)).then(|| timeline_left::floating_rect(self, below_ribbon))
             } else {
-                show_timeline.then(|| timeline::floating_rect(full))
+                show_timeline.then(|| timeline::floating_rect(timeline::beside_library(self, full)))
             };
             // Draw the scene first, then let the unchanged panel layouts cover it. The
             // viewport keeps its full projection even underneath the browser and cards.
@@ -2656,6 +2663,8 @@ impl SolveApp {
             timeline::timeline(self, ui);
         }
         dialog_column::layout(self, ui.available_rect_before_wrap());
+        // The parts library sits at the window's left edge, outside the browser.
+        library::panel(self, ui);
         if left_timeline {
             timeline_left::left_panel(self, ui);
         }
