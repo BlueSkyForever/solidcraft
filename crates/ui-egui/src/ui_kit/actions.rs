@@ -278,19 +278,17 @@ pub(super) fn footer_with_left(
                 ButtonTone::Normal
             };
             // A confirmation's third choice (Don't Save, Keep) never waited for OK's inputs.
-            let response = ui
-                .add_enabled_ui(!nothing_to_apply, |ui| {
-                    let mut button = styled_button(ui, crate::i18n::tr_label(label).into(), tone)
-                        .frame(secondary_left)
-                        .selected(marked)
-                        .min_size(vec2(0.0, t.form_button_height));
-                    if secondary_left {
-                        ui.spacing_mut().button_padding = vec2(t.space_12, 0.0);
-                        button = button.corner_radius(t.control_radius);
-                    }
-                    ui.add(button)
-                })
-                .inner;
+            let response = ui.add_enabled(!nothing_to_apply, |ui: &mut Ui| {
+                let mut button = styled_button(ui, crate::i18n::tr_label(label).into(), tone)
+                    .frame(secondary_left)
+                    .selected(marked)
+                    .min_size(vec2(0.0, t.form_button_height));
+                if secondary_left {
+                    ui.spacing_mut().button_padding = vec2(t.space_12, 0.0);
+                    button = button.corner_radius(t.control_radius);
+                }
+                ui.add(button)
+            });
             pointer_on_hover(ui, &response);
             scenario::publish_target("dialog:apply", response.rect);
             scenario::publish_handle(&format!("dialog:{label}"), response.rect.center());
@@ -355,17 +353,16 @@ fn action_button(ui: &mut Ui, label: &str, kind: Action, look: &ActionLook, padd
     } else {
         ButtonTone::Normal
     };
-    let response = ui
-        .add_enabled_ui(live, |ui| {
-            ui.add(
-                styled_button(ui, if primary && ok_enabled { text.bold_face().into() } else { text.into() }, tone)
-                    .selected(marked && !primary)
-                    .wrap_mode(egui::TextWrapMode::Extend)
-                    .corner_radius(t.control_radius)
-                    .min_size(vec2(min_width, t.form_button_height)),
-            )
-        })
-        .inner;
+    // Style after add_enabled sets the state, preserving the native button's ID and layout.
+    let response = ui.add_enabled(live, |ui: &mut Ui| {
+        ui.add(
+            styled_button(ui, if primary && ok_enabled { text.bold_face().into() } else { text.into() }, tone)
+                .selected(marked && !primary)
+                .wrap_mode(egui::TextWrapMode::Extend)
+                .corner_radius(t.control_radius)
+                .min_size(vec2(min_width, t.form_button_height)),
+        )
+    });
     t.button_bevel(ui, &response, false);
     pointer_on_hover(ui, &response);
     let key = match kind {
