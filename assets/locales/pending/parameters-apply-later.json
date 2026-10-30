@@ -1,0 +1,50 @@
+{
+  "en": {
+    "parameters.apply_live": "Apply each change as you leave its field",
+    "parameters.apply_live_tip": "Off: changes wait until Apply or OK, then the design rebuilds once for all of them. Cancel or Escape drops them.",
+    "parameters.held": "{count} changes waiting for Apply",
+    "parameters.held_one": "1 change waiting for Apply"
+  },
+  "ar": {
+    "parameters.apply_live": "طبّق كل تغيير عند مغادرة حقله",
+    "parameters.apply_live_tip": "عند الإيقاف: تنتظر التغييرات حتى «تطبيق» أو «موافق»، ثم يُعاد بناء التصميم مرة واحدة لها جميعًا. «إلغاء» أو Escape يتجاهلها.",
+    "parameters.held": "{count} تغييرات بانتظار «تطبيق»",
+    "parameters.held_one": "تغيير واحد بانتظار «تطبيق»"
+  },
+  "de": {
+    "parameters.apply_live": "Jede Änderung beim Verlassen des Feldes übernehmen",
+    "parameters.apply_live_tip": "Aus: Änderungen warten auf Übernehmen oder OK, dann wird das Modell einmal für alle neu aufgebaut. Abbrechen oder Esc verwirft sie.",
+    "parameters.held": "{count} Änderungen warten auf Übernehmen",
+    "parameters.held_one": "1 Änderung wartet auf Übernehmen"
+  },
+  "fr": {
+    "parameters.apply_live": "Appliquer chaque modification en quittant son champ",
+    "parameters.apply_live_tip": "Désactivé : les modifications attendent Appliquer ou OK, puis le modèle est reconstruit une seule fois pour toutes. Annuler ou Échap les abandonne.",
+    "parameters.held": "{count} modifications en attente d’Appliquer",
+    "parameters.held_one": "1 modification en attente d’Appliquer"
+  },
+  "he": {
+    "parameters.apply_live": "להחיל כל שינוי ביציאה מהשדה שלו",
+    "parameters.apply_live_tip": "כבוי: השינויים ממתינים עד ל„החל” או „אישור”, ואז התכן נבנה מחדש פעם אחת עבור כולם. „ביטול” או Escape משליכים אותם.",
+    "parameters.held": "{count} שינויים ממתינים ל„החל”",
+    "parameters.held_one": "שינוי אחד ממתין ל„החל”"
+  },
+  "ja": {
+    "parameters.apply_live": "フィールドを離れるたびに変更を適用",
+    "parameters.apply_live_tip": "オフ: 変更は「適用」または「OK」まで保留され、その後すべてをまとめて一度だけ再構築します。「キャンセル」または Esc で破棄します。",
+    "parameters.held": "{count} 件の変更が適用待ちです",
+    "parameters.held_one": "1 件の変更が適用待ちです"
+  },
+  "vi": {
+    "parameters.apply_live": "Áp dụng mỗi thay đổi khi rời khỏi ô của nó",
+    "parameters.apply_live_tip": "Tắt: các thay đổi chờ đến khi nhấn Áp dụng hoặc OK, rồi thiết kế được dựng lại một lần cho tất cả. Hủy hoặc Escape sẽ bỏ chúng.",
+    "parameters.held": "{count} thay đổi đang chờ Áp dụng",
+    "parameters.held_one": "1 thay đổi đang chờ Áp dụng"
+  },
+  "zh": {
+    "parameters.apply_live": "离开字段时立即应用每项更改",
+    "parameters.apply_live_tip": "关闭时：更改会等到“应用”或“确定”，然后设计只为所有更改重建一次。“取消”或 Esc 会放弃这些更改。",
+    "parameters.held": "{count} 项更改等待应用",
+    "parameters.held_one": "1 项更改等待应用"
+  }
+}

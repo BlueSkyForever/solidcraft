@@ -4,6 +4,8 @@
 //! (name, unit, expression, value, comment; add, rename, delete) and model parameters grouped by
 //! the sketch or feature they drive (editable). Expressions validate as you type
 //! (`expr.evaluate`) with a live model preview; Enter or leaving the field applies them.
+//! With "Apply each change as you leave its field" off (a remembered preference, #9279), they
+//! wait instead, without a preview, until Apply or OK sets them in one `parameters.change`.
 //! Escape closes the window and discards pending edits and their preview.
 //! Import and export go through `parameters.import` / `parameters.export`.
 //!
@@ -225,9 +227,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         d.lists += 1;
         rows
     };
-    let mut close = false;
+    let mut outcome = (false, ui_kit::Action::None);
+    let live = app.preferences.parameters_apply_live;
+    let held_status = if live { None } else { held_status(held(&d, &all).len()) };
     panel.window(ctx).show(ctx, |ui| {
-        let (closed, action) = panel.feature(
+        outcome = panel.feature(
             ui,
             ui_kit::FeatureOptions {
                 icon: solidcraft_engine::find_command("parameters.change").map_or("", |c| c.icon),
@@ -235,12 +239,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 drag_key: "PARAMETERS",
                 moved,
                 docked,
-                apply_label: None,
+                apply_label: (!live).then_some("Apply"),
             },
             false,
             true,
             |ui| {
                 ui_kit::text(ui, crate::i18n::tr("manage.parameters_hint"), ui_kit::Text::Hint("manage"));
+                apply_live_checkbox(app, ui, &mut d, &all);
                 ui_kit::row(ui, "Filter", |ui| {
                     let id = ui.make_persistent_id("parameter_filter");
                     ui_kit::search_field(ui, id, &mut d.filter, "Filter");
@@ -329,12 +334,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         });
                     });
                 });
-                ui_kit::ComputeStatus { text: None, busy: false, applying: false }
+                ui_kit::ComputeStatus { text: held_status, busy: false, applying: false }
             },
         );
         d.reset_scroll = false;
-        close = closed || matches!(action, ui_kit::Action::Ok | ui_kit::Action::Cancel);
     });
+    // Held edits (#9279) are set by Apply and OK; Cancel, the close button and Escape drop them.
+    let (closed, action) = outcome;
+    let applied = live || !matches!(action, ui_kit::Action::Ok | ui_kit::Action::Apply) || apply_held(app, &mut d, &all);
+    let close = closed || action == ui_kit::Action::Cancel || (action == ui_kit::Action::Ok && applied);
     // Each cell owns fresh Enter from raw events. The panel itself must not submit on
     // Enter in the filter or with unrelated focus (the legacy editor left those alone), but
     // the filter, rename and comment fields still see Enter first to give up focus.
@@ -504,13 +512,18 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                     if response.changed() || completed {
                         d.editing.insert(r.name.clone(), expression.clone());
                     }
-                    if response.has_focus() && matches!(live, Some(Ok(_))) {
+                    // Held edits (#9279) preview nothing: the preview is a rebuild too.
+                    let apply_live = app.preferences.parameters_apply_live;
+                    if apply_live && response.has_focus() && matches!(live, Some(Ok(_))) {
                         d.preview = Some((r.name.clone(), expression.clone()));
                     }
                     let entered = !completed && enter_for(ui, focused);
                     if !completed && (response.lost_focus() || entered) {
                         d.preview = None;
-                        if expression != r.expression {
+                        if expression != r.expression && !apply_live {
+                            // Kept in `editing` for Apply or OK, checked now.
+                            d.error = check(app, &expression, &r.unit).err();
+                        } else if expression != r.expression {
                             d.error = check(app, &expression, &r.unit)
                                 .and_then(|_| app.run("parameters.change", json!({"name":r.name,"expression":expression})))
                                 .err();
@@ -582,6 +595,51 @@ fn enter_for(ui: &mut egui::Ui, focused: bool) -> bool {
             }
             fresh
         })
+}
+
+/// The expression edits waiting for Apply (#9279): each draft that differs from the design.
+fn held(d: &ParamsDialog, rows: &[Row]) -> serde_json::Map<String, Value> {
+    rows.iter().filter_map(|r| d.editing.get(&r.name).filter(|e| **e != r.expression).map(|e| (r.name.clone(), json!(e)))).collect()
+}
+
+/// The footer's note of the edits waiting for Apply, if any.
+fn held_status(count: usize) -> Option<String> {
+    match count {
+        0 => None,
+        1 => Some(crate::i18n::tr("parameters.held_one").to_string()),
+        n => Some(crate::i18n::format("parameters.held", &[("count", &n.to_string())])),
+    }
+}
+
+/// Set the edits waiting for Apply together: one `parameters.change`, so the design rebuilds once
+/// and one undo takes them all back. A single edit goes as `name, expression`, which can also
+/// rename (`new = …`). False, with the error shown and the edits kept, when it is refused.
+fn apply_held(app: &mut SolveApp, d: &mut ParamsDialog, rows: &[Row]) -> bool {
+    let changes = held(d, rows);
+    let params = match changes.iter().next() {
+        None => return true,
+        Some((name, expression)) if changes.len() == 1 => json!({"name": name, "expression": expression}),
+        Some(_) => json!({"changes": changes}),
+    };
+    d.error = app.run("parameters.change", params).err();
+    if d.error.is_some() {
+        return false;
+    }
+    for name in changes.keys() {
+        d.editing.remove(name);
+    }
+    true
+}
+
+/// "Apply each change as you leave its field", remembered across sessions (#9279). Turning it
+/// back on applies what was waiting.
+fn apply_live_checkbox(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[Row]) {
+    let response = ui_kit::checkbox(ui, crate::i18n::tr("parameters.apply_live"), &mut app.preferences.parameters_apply_live)
+        .on_hover_text(crate::i18n::tr("parameters.apply_live_tip"));
+    crate::scenario::publish_handle("params:apply_live", response.rect.center());
+    if response.changed() && app.preferences.parameters_apply_live {
+        apply_held(app, d, rows);
+    }
 }
 
 /// The add row, one cell per column of the user table it ends.
@@ -1017,6 +1075,102 @@ mod tests {
         assert!(!crate::keymap::capturing(&h.app));
         assert!(h.app.prefs_window.open && h.app.params.is_some(), "Escape cancels only shortcut capture");
         assert_eq!(escape_state(&h), before);
+    }
+
+    /// #9279: a box driven by `w` and `h`, the Parameters dialog open with live updates off.
+    fn held_dialog() -> crate::scenario::Harness {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.preferences.parameters_apply_live = false;
+        h.app.run("parameters.add", json!({"name":"w","expression":"10 mm"})).unwrap();
+        h.app.run("parameters.add", json!({"name":"h","expression":"20 mm"})).unwrap();
+        h.app.run("solid.box", json!({"length":"w","width":"w","height":"h"})).unwrap();
+        h.step(&json!({"start":"parameters.change"})).unwrap();
+        h.frames(3);
+        h
+    }
+
+    fn expression(h: &crate::scenario::Harness, name: &str) -> String {
+        h.app.session.doc.param(name).map(|p| p.expr.clone()).unwrap_or_default()
+    }
+
+    /// Type into a parameter's expression and leave the field, as the user moves on.
+    fn hold(h: &mut crate::scenario::Harness, name: &str, text: &str) {
+        escape_type(h, &format!("param:{name}"), text);
+        h.step(&json!({"click":{"handle":"dialog:Filter"}})).unwrap();
+    }
+
+    #[test]
+    fn held_edits_wait_for_apply_and_go_in_together_as_one_undo_step() {
+        let mut h = held_dialog();
+        let (revision, undo) = (h.app.session.revision, h.app.session.undo.len());
+        hold(&mut h, "w", "30 mm");
+        hold(&mut h, "h", "w * 2");
+        assert_eq!((expression(&h, "w").as_str(), expression(&h, "h").as_str()), ("10 mm", "20 mm"), "leaving a field changes nothing yet");
+        assert_eq!((h.app.session.revision, h.app.session.undo.len()), (revision, undo), "no rebuild and no undo step while held");
+        let d = h.app.params.as_ref().unwrap();
+        assert!(d.preview.is_none() && d.error.is_none());
+        assert_eq!(d.editing.len(), 2);
+        h.step(&json!({"click":{"handle":"dialog:Apply"}})).unwrap();
+        assert_eq!((expression(&h, "w").as_str(), expression(&h, "h").as_str()), ("30 mm", "w * 2"));
+        assert_eq!(h.app.session.undo.len(), undo + 1, "one undo step for both");
+        let d = h.app.params.as_ref().expect("Apply keeps the dialog open");
+        assert!(d.editing.is_empty() && d.error.is_none());
+        h.app.run("edit.undo", json!({})).unwrap();
+        assert_eq!((expression(&h, "w").as_str(), expression(&h, "h").as_str()), ("10 mm", "20 mm"), "one undo takes both back");
+    }
+
+    #[test]
+    fn held_edits_go_in_with_ok_and_are_dropped_by_cancel_or_escape() {
+        let mut h = held_dialog();
+        let before = escape_state(&h);
+        hold(&mut h, "w", "30 mm");
+        h.step(&json!({"click":{"handle":"dialog:Cancel"}})).unwrap();
+        assert!(h.app.params.is_none());
+        assert_eq!(escape_state(&h), before, "Cancel drops held edits");
+        h.step(&json!({"start":"parameters.change"})).unwrap();
+        h.frames(2);
+        hold(&mut h, "w", "30 mm");
+        escape_key(&mut h, true);
+        assert!(h.app.params.is_none());
+        assert_eq!(escape_state(&h), before, "Escape drops held edits");
+        escape_key(&mut h, false);
+        h.step(&json!({"start":"parameters.change"})).unwrap();
+        h.frames(2);
+        hold(&mut h, "w", "30 mm");
+        h.step(&json!({"click":{"handle":"dialog:OK"}})).unwrap();
+        assert!(h.app.params.is_none());
+        assert_eq!(expression(&h, "w"), "30 mm", "OK applies held edits");
+    }
+
+    #[test]
+    fn a_refused_held_edit_keeps_the_dialog_open_with_its_error() {
+        let mut h = held_dialog();
+        hold(&mut h, "w", "30 mm");
+        hold(&mut h, "h", "nonexistent * 2");
+        assert!(h.app.params.as_ref().unwrap().error.is_some(), "a held edit is checked when its field is left");
+        h.step(&json!({"click":{"handle":"dialog:OK"}})).unwrap();
+        let d = h.app.params.as_ref().expect("OK keeps the dialog open when the edits are refused");
+        assert!(d.error.is_some());
+        assert_eq!(d.editing.len(), 2, "the held edits are kept to correct");
+        assert_eq!(expression(&h, "w"), "10 mm", "all or nothing");
+    }
+
+    #[test]
+    fn the_apply_live_choice_is_remembered_and_turning_it_on_applies_what_waits() {
+        assert!(crate::prefs::Prefs::default().parameters_apply_live, "live updates stay the default");
+        let mut h = held_dialog();
+        hold(&mut h, "w", "30 mm");
+        h.step(&json!({"click":{"handle":"params:apply_live"}})).unwrap();
+        assert!(h.app.preferences.parameters_apply_live);
+        assert_eq!(expression(&h, "w"), "30 mm");
+        assert!(h.app.params.as_ref().unwrap().editing.is_empty());
+        h.step(&json!({"click":{"handle":"params:apply_live"}})).unwrap();
+        assert!(!h.app.preferences.parameters_apply_live);
+        let saved = h.app.prefs();
+        let mut other = crate::scenario::Harness::new();
+        other.app.load_prefs(&saved);
+        assert!(!other.app.preferences.parameters_apply_live, "the choice persists with the preferences");
     }
 
     #[test]
