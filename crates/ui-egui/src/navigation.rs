@@ -811,22 +811,26 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
 
 /// The 3D mouse's motion this frame (#1336), on a page `rect` whose camera may do `caps`: the cap
 /// pans and zooms every page, and turns the view where the page may orbit. In a sketch, turning
-/// stays off while the camera is in its initial sketch orientation. [`handle`] calls it for its page; the 3D
-/// mouse only reads the device and queues the motion ([`crate::space_mouse::navigate_frame`]).
+/// stays off while the camera is in its initial sketch orientation, unless the user lets the 3D
+/// mouse turn sketches (`space_mouse_sketch_orbit`, #2227), as the mouse can. [`handle`] calls it
+/// for its page; the 3D mouse only reads the device and queues the motion
+/// ([`crate::space_mouse::navigate_frame`]).
 pub(crate) fn device(app: &mut SolveApp, rect: Rect, caps: NavCaps) {
     if app.viewport.device_motion.is_none() && app.viewport.bridge_motion.is_none() {
         return;
     }
-    let sketch_view_is_initial = solidcraft_engine::view::open_sketch_plane(&app.session).is_some_and(|plane| {
-        let normal = plane.normal();
-        let mut initial = app.cam.looking_from(normal);
-        if normal.z.abs() > 0.999 {
-            initial.yaw = if normal.z > 0.0 { (-plane.x.y).atan2(plane.x.x) } else { plane.x.y.atan2(plane.x.x) };
-        }
-        let (right, up, back) = app.cam.basis();
-        let (initial_right, initial_up, initial_back) = initial.basis();
-        right.dot(initial_right) > 0.999 && up.dot(initial_up) > 0.999 && back.dot(initial_back) > 0.999
-    });
+    let sketch_turns = app.preferences.space_mouse_sketch_orbit;
+    let sketch_view_is_initial = !sketch_turns
+        && solidcraft_engine::view::open_sketch_plane(&app.session).is_some_and(|plane| {
+            let normal = plane.normal();
+            let mut initial = app.cam.looking_from(normal);
+            if normal.z.abs() > 0.999 {
+                initial.yaw = if normal.z > 0.0 { (-plane.x.y).atan2(plane.x.x) } else { plane.x.y.atan2(plane.x.x) };
+            }
+            let (right, up, back) = app.cam.basis();
+            let (initial_right, initial_up, initial_back) = initial.basis();
+            right.dot(initial_right) > 0.999 && up.dot(initial_up) > 0.999 && back.dot(initial_back) > 0.999
+        });
     let turn = caps.orbit && !sketch_view_is_initial;
     let height = f64::from(rect.height().max(1.0));
     // A device has no pointer, so opt-in zoom holds the model at the middle of the view (#7435).
@@ -2283,6 +2287,45 @@ mod tests {
         let still = app.cam;
         super::device(&mut app, page, super::NavCaps::MODEL);
         assert_eq!(app.cam, still);
+    }
+
+    /// With "3D mouse turns sketches" on (#2227), the cap and a device app turn a sketch seen square
+    /// on, as the mouse does; pages that may not orbit still only pan.
+    #[test]
+    fn the_3d_mouse_turns_a_square_on_sketch_when_the_preference_allows_it() {
+        use crate::space_mouse::{BridgeMotion, DeviceMotion, Motion};
+        use solidcraft_engine::render::Camera;
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("sketch.create", &serde_json::json!({"plane": "XY"})).unwrap();
+        let mut app = crate::SolveApp::new(s, crate::Services::default());
+        assert!(!app.preferences.space_mouse_sketch_orbit, "off by default");
+        app.preferences.space_mouse_sketch_orbit = true;
+        let square_on = Camera { yaw: 0.0, pitch: std::f64::consts::FRAC_PI_2, ..Camera::default() };
+        let page = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let turn = |c: &Camera| (c.yaw, c.pitch, c.roll);
+
+        app.cam = square_on;
+        app.viewport.device_motion = Some(DeviceMotion { motion: Motion { translation: [0.0; 3], rotation: [0.3, 0.3, 0.0] }, seconds: 0.05 });
+        super::device(&mut app, page, super::NavCaps::MODEL);
+        assert_ne!(turn(&app.cam), turn(&square_on), "the cap turns the square-on sketch");
+
+        app.cam = square_on;
+        app.viewport.bridge_motion = Some(BridgeMotion { orbit: [6.0, 6.0], ..Default::default() });
+        super::device(&mut app, page, super::NavCaps::MODEL);
+        assert_ne!(turn(&app.cam), turn(&square_on), "a device app turns it too");
+
+        // A page that may not orbit keeps its orientation whatever the preference.
+        app.cam = square_on;
+        app.viewport.device_motion = Some(DeviceMotion { motion: Motion { translation: [0.0; 3], rotation: [0.3, 0.3, 0.3] }, seconds: 0.05 });
+        super::device(&mut app, page, super::NavCaps { orbit: false, ..super::NavCaps::MODEL });
+        assert_eq!(turn(&app.cam), turn(&square_on));
+
+        // Off again: the square-on sketch keeps its orientation, as before.
+        app.preferences.space_mouse_sketch_orbit = false;
+        app.cam = square_on;
+        app.viewport.device_motion = Some(DeviceMotion { motion: Motion { translation: [0.0; 3], rotation: [0.3, 0.3, 0.3] }, seconds: 0.05 });
+        super::device(&mut app, page, super::NavCaps::MODEL);
+        assert_eq!(turn(&app.cam), turn(&square_on));
     }
 }
 
