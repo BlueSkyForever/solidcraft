@@ -116,6 +116,9 @@ pub(crate) fn viewport_status_item(ui: &mut Ui, item: &StatusItem, state: &mut S
                     let text = RichText::new(&item.setting).monospace().size(t.font_small).color(t.text_dim);
                     let response = if item.editable { super::button(ui, text, Button::Ghost) } else { ui.label(text) };
                     scenario::publish_target(&target(item, "setting"), response.rect);
+                    if item.editable {
+                        state.focus_ids.push(response.id);
+                    }
                     if item.editable && response.clicked() {
                         action = Some(StatusAction::Edit(item.id.clone()));
                     }

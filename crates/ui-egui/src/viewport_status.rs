@@ -5,7 +5,59 @@ use crate::{
 };
 use solidcraft_engine::status_items::{StatusId, StatusItem as Effect, StatusSetting};
 
-const PRESENTED: &[StatusId] = &[StatusId::SurfaceAnalysis, StatusId::Continuity];
+fn allowed(app: &SolveApp) -> Vec<StatusId> {
+    let mut ids = Vec::new();
+    if app.preferences.viewport_analysis_status {
+        ids.extend([StatusId::SurfaceAnalysis, StatusId::Continuity]);
+    }
+    if app.preferences.viewport_section_status {
+        ids.push(StatusId::Section);
+    }
+    ids
+}
+
+fn eligible(app: &SolveApp) -> Vec<StatusId> {
+    app.session.status_items().iter().filter(|effect| presentation(app, effect).is_some()).map(|effect| effect.id).collect()
+}
+
+pub(crate) fn enabled(app: &SolveApp) -> bool {
+    app.preferences.viewport_analysis_status || app.preferences.viewport_section_status
+}
+
+/// Canonical plane coordinates: reversing the clipping side never reverses the offset.
+/// Axis planes use world coordinates; other planes use signed distance to the origin.
+pub(crate) fn section_coordinates(origin: [f64; 3], normal: [f64; 3]) -> Option<(Option<&'static str>, f64, [f64; 3])> {
+    let scale = normal.iter().fold(0.0_f64, |a, b| a.max(b.abs()));
+    if !normal.iter().chain(origin.iter()).all(|v| v.is_finite()) || !scale.is_finite() || scale == 0.0 {
+        return None;
+    }
+    let scaled = normal.map(|n| n / scale);
+    let length = scaled.iter().map(|n| n * n).sum::<f64>().sqrt();
+    let mut n = scaled.map(|n| n / length);
+    if n.iter().find(|v| v.abs() > 1e-8).is_some_and(|v| *v < 0.0) {
+        n = n.map(|v| -v);
+    }
+    for (i, axis) in ["X", "Y", "Z"].into_iter().enumerate() {
+        if n.iter().enumerate().all(|(j, v)| (*v - if i == j { 1.0 } else { 0.0 }).abs() < 1e-8) {
+            return Some((Some(axis), *origin.get(i)?, n));
+        }
+    }
+    let distance = origin.iter().zip(n).map(|(o, n)| o * n).sum::<f64>();
+    distance.is_finite().then_some((None, distance, n))
+}
+
+pub(crate) fn section_setting(app: &SolveApp, origin: [f64; 3], normal: [f64; 3], hatch: bool) -> Option<String> {
+    let (axis, offset, _) = section_coordinates(origin, normal)?;
+    let distance = crate::prefs::show_mm(app, offset, 1);
+    let mut text = match axis {
+        Some(axis) => format!("{axis} {distance}"),
+        None => crate::i18n::format("ui.viewport_status_section_tilted", &[("offset", &distance)]),
+    };
+    if hatch {
+        text = crate::i18n::format("ui.viewport_status_section_hatch", &[("setting", &text)]);
+    }
+    Some(text)
+}
 
 fn identity(effect: &Effect) -> String {
     format!("{:?}:{}", effect.id, effect.command)
@@ -25,7 +77,7 @@ fn direction(value: [f64; 3]) -> String {
 }
 
 pub(crate) fn presentation(app: &SolveApp, effect: &Effect) -> Option<StatusItem> {
-    if !PRESENTED.contains(&effect.id) {
+    if !allowed(app).contains(&effect.id) {
         return None;
     }
     let command = solidcraft_engine::find_command(&effect.command)?;
@@ -36,7 +88,7 @@ pub(crate) fn presentation(app: &SolveApp, effect: &Effect) -> Option<StatusItem
         StatusSetting::Accessibility { direction: from } => crate::i18n::format("ui.viewport_status_from", &[("direction", &direction(from))]),
         StatusSetting::Curvature { radius_mm } => format!("R {}", crate::prefs::show_mm(app, radius_mm, 1)),
         StatusSetting::Continuity { edge_count } => crate::i18n::format("ui.viewport_status_edges", &[("count", &edge_count.to_string())]),
-        StatusSetting::Section { .. } => return None,
+        StatusSetting::Section { origin_mm, normal, hatch } => section_setting(app, origin_mm, normal, hatch)?,
     };
     Some(StatusItem {
         id: identity(effect),
@@ -44,7 +96,7 @@ pub(crate) fn presentation(app: &SolveApp, effect: &Effect) -> Option<StatusItem
         name: crate::toolbar::persistent_button_name(app, command),
         setting,
         has_key: effect.has_key,
-        editable: false,
+        editable: effect.id == StatusId::Section,
     })
 }
 
@@ -53,7 +105,7 @@ fn clear(app: &mut SolveApp, effect: &Effect) {
 }
 
 pub(crate) fn has_effect(app: &SolveApp) -> bool {
-    app.session.newest_status_item(PRESENTED).is_some()
+    app.session.newest_status_item(&eligible(app)).is_some()
 }
 
 /// Called only after existing Escape owners have yielded. A repeat cannot cascade clears.
@@ -62,11 +114,11 @@ pub(crate) fn escape(app: &mut SolveApp, repeat: bool) -> bool {
         return app.viewport_status.open_key.is_some() || has_effect(app);
     }
     if let Some(open) = app.viewport_status.open_key.take()
-        && app.session.status_items().iter().any(|effect| effect.has_key && identity(effect) == open)
+        && app.session.status_items().iter().any(|effect| eligible(app).contains(&effect.id) && effect.has_key && identity(effect) == open)
     {
         return true;
     }
-    if let Some(effect) = app.session.newest_status_item(PRESENTED) {
+    if let Some(effect) = app.session.newest_status_item(&eligible(app)) {
         clear(app, &effect);
         return true;
     }
@@ -74,11 +126,14 @@ pub(crate) fn escape(app: &mut SolveApp, repeat: bool) -> bool {
 }
 
 pub(crate) fn show(app: &mut SolveApp, ctx: &egui::Context, viewport: egui::Rect) {
-    if !app.preferences.viewport_analysis_status {
+    if !enabled(app) {
         app.viewport_status.open_key = None;
         return;
     }
     let effects = app.session.status_items();
+    if !app.preferences.viewport_analysis_status {
+        app.viewport_status.open_key = None;
+    }
     let items: Vec<_> = effects.iter().filter_map(|effect| presentation(app, effect)).collect();
     if items.is_empty() {
         app.viewport_status = Default::default();
@@ -105,11 +160,18 @@ pub(crate) fn show(app: &mut SolveApp, ctx: &egui::Context, viewport: egui::Rect
         }
     });
     for action in actions {
-        if let StatusAction::Clear(id) = action
-            && let Some(effect) = effects.iter().find(|effect| identity(effect) == id)
-        {
-            clear(app, effect);
-            app.viewport_status.open_key = None;
+        match action {
+            StatusAction::Clear(id) => {
+                if let Some(effect) = effects.iter().find(|effect| identity(effect) == id) {
+                    clear(app, effect);
+                    app.viewport_status.open_key = None;
+                }
+            }
+            StatusAction::Edit(id) => {
+                if effects.iter().any(|effect| effect.id == StatusId::Section && identity(effect) == id) {
+                    crate::dialogs::edit_section(app);
+                }
+            }
         }
     }
 }

@@ -891,7 +891,7 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::Section { offset, flip, hatch } => {
             enter |= expr_row(ui, "Distance", offset);
             ui_kit::options(ui, "feature_options", &mut [("Flip", flip), ("Hatch", hatch)]);
-            if section_turns_off(&app.session, &d.inputs) {
+            if section_turns_off(&app.session, &d.inputs) && !d.extra.contains_key("plane") {
                 ui_kit::text(ui, tr("section.off_hint"), ui_kit::Text::Hint("section_off"));
             }
         }
