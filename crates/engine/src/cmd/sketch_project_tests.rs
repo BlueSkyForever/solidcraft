@@ -1098,3 +1098,56 @@ fn a_rebuilt_projection_keeps_user_constraints_without_a_warning() {
         assert!(warning.is_none(), "{warning:?}");
     }
 }
+
+/// #9001: an angle (an L profile, wall thickness `d1`, legs `d2`) with a sketch on its face and
+/// a hole dimensioned to the inner wall's projected edge. Making the wall thicker moves the
+/// inner corner by more than a tenth of the face; the projection follows it (it was kept as it
+/// was, "boundary identity is ambiguous"), and the hole with it, as it already did for `d2`.
+#[test]
+fn a_thicker_angle_moves_the_projected_face_of_the_sketch_on_it() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.change", json!({"name": "d1", "expression": "20 mm"}));
+    run(&mut s, "parameters.change", json!({"name": "d2", "expression": "80 mm"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    let l = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 0], [80, 0], [80, 20], [20, 20], [20, 80], [0, 80]], "closed": true}))["curves"]);
+    for (i, line) in l.iter().enumerate() {
+        let mode = if i % 2 == 0 { "horizontal" } else { "vertical" };
+        run(&mut s, "sketch.constraint.horizontal_vertical", json!({"line": line, "mode": mode}));
+    }
+    run(&mut s, "sketch.constraint.coincident", json!({"a": format!("{}.start", l[0]), "b": "origin"}));
+    for (k, value) in [(0, "d2"), (1, "d1"), (4, "d1"), (5, "d2")] {
+        run(&mut s, "sketch.dimension", json!({"entities": [l[k]], "value": value}));
+    }
+    assert_eq!(inspect(&mut s)["dof"], 0);
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 30}));
+    let sketch = run(&mut s, "sketch.create", json!({"plane": {"face": [10, 10, 30]}}))["sketch"].as_u64().unwrap();
+    let si = inspect(&mut s);
+    // The inner wall's edge, from (20, 20) to (20, 80) on the face.
+    let wall = linked_curves(&si)
+        .into_iter()
+        .find(|c| {
+            ["start_at", "end_at"].iter().all(|e| (c[e][0].as_f64().unwrap().abs() - 20.).abs() < 1e-6 && c[e][1].as_f64().unwrap().abs() > 19.)
+        })
+        .unwrap_or_else(|| panic!("{si}"));
+    let hole = ids(&run(&mut s, "sketch.circle.center", json!({"center": [10, 50], "radius": 3}))["curves"])[0].clone();
+    run(&mut s, "sketch.dimension", json!({"entities": [format!("{hole}.center"), wall["id"]], "value": 10}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "parameters.change", json!({"name": "d1", "expression": "30 mm"}));
+    let check = |s: &Session| {
+        let warning = s.model.result(sketch).and_then(|r| r.warning.clone());
+        assert!(warning.is_none(), "{warning:?}");
+        let st = s.model.state();
+        let ss = st.sketch(sketch).unwrap();
+        assert!(ss.sketch.links.iter().all(|l| !l.lost));
+        let world = |p: solidcraft_geom::Vec2| ss.plane.to_world(p);
+        let at = |x: f64, y: f64| ss.sketch.points.iter().any(|p| world(p.pos).dist(solidcraft_geom::Vec3::new(x, y, 30.)) < 1e-6);
+        // The inner corner is at (30, 30) now, and the hole 10 from the wall that moved.
+        assert!(at(30., 30.) && !at(20., 20.));
+        let center = ss.sketch.points.iter().find(|p| p.id == format!("{hole}.center")).unwrap();
+        assert!((world(center.pos).x - 20.).abs() < 1e-6, "{:?}", world(center.pos));
+        assert_eq!(ss.sketch.constraints.len(), 1);
+    };
+    check(&s);
+    check(&Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap()));
+}
