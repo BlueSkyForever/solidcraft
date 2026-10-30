@@ -1138,6 +1138,14 @@ preference_settings! {
     origin_plane_names: OriginPlaneNames = OriginPlaneNames::default(), PAGE_INTERFACE;
     /// When components' bodies sit in a Bodies folder in the browser (#4217).
     browser_bodies_folders: BodiesFolders = BodiesFolders::Several, PAGE_INTERFACE;
+    /// A body picked in the 3D view opens the Browser down to its row (#3005), and the rows above
+    /// a selected or hovered body are marked (#3009). Off by default: with the rows closed, finding
+    /// a selected body's placement names every placement again after each edit; Find in Browser
+    /// finds one.
+    browser_follows_view: bool = false, PAGE_INTERFACE => check_id("prefs.browser_follows_view");
+    /// Placements and folders in the Browser start open. Off by default: they start closed, so a
+    /// design with many components shows its top-level rows, and each opens with its arrow.
+    browser_rows_start_open: bool = false, PAGE_INTERFACE => check_id("prefs.browser_rows_start_open");
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     zoom_to_cursor: bool = true, PAGE_NAVIGATION => check("Zoom to the cursor", "The wheel zooms toward the point under the cursor (off: toward the view's center)");
     /// Speed multiplier for wheel zoom, independent of the 3D mouse.
@@ -4966,6 +4974,8 @@ mod tests {
             ("browser_collapsed", json!(true), PAGE_INTERFACE),
             ("browser_show", json!("hover"), PAGE_INTERFACE),
             ("dialog_place", json!("left_column"), PAGE_INTERFACE),
+            ("browser_follows_view", json!(true), PAGE_INTERFACE),
+            ("browser_rows_start_open", json!(true), PAGE_INTERFACE),
             ("color_vision", json!("protan"), PAGE_INTERFACE),
             ("viewport_theme", json!("light"), PAGE_INTERFACE),
             ("viewport_background", json!([255, 255, 255]), PAGE_INTERFACE),
