@@ -4666,7 +4666,7 @@
   "update.check_now": "Sjekk nå",
   "update.checking": "Sjekker…",
   "update.copy": "Kopier",
-  "update.dmg_opened": "Diskbildet er åpent og verifisert: dra SolidCraft til Applications, erstatt den gamle kopien, og start deretter SolidCraft på nytt.",
+  "update.dmg_opened": "Diskbildet er åpent og verifisert: avslutt SolidCraft, dra det nye SolidCraft til Applications, erstatt den gamle kopien, og åpne deretter SolidCraft igjen.",
   "update.download": "Last ned",
   "update.download_open": "Last ned og åpne",
   "update.downloading": "Laster ned og verifiserer… {done} av {total} MB",
