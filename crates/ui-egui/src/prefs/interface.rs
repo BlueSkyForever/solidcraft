@@ -106,6 +106,10 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                         let check = setting::viewport_section_status(app, ui).on_hover_text(app.tr("prefs.viewport_section_status_help"));
                         crate::scenario::publish_target("prefs:viewport_section_status", check.rect);
                     });
+                    ui_kit::row(ui, "", |ui| {
+                        let check = setting::viewport_status_summary(app, ui).on_hover_text(app.tr("prefs.viewport_status_summary_help"));
+                        crate::scenario::publish_target("prefs:viewport_status_summary", check.rect);
+                    });
                     // The SKETCH tab outside a sketch too (#7904).
                     ui_kit::row(ui, "", |ui| {
                         let check = setting::sketch_tab_always(app, ui).on_hover_text(app.tr("prefs.sketch_tab_always_note"));

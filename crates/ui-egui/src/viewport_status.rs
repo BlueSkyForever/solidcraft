@@ -101,7 +101,9 @@ pub(crate) fn presentation(app: &SolveApp, effect: &Effect) -> Option<StatusItem
 }
 
 fn clear(app: &mut SolveApp, effect: &Effect) {
-    let _ = app.run(&effect.clear.command, serde_json::json!({"clear": effect.clear.params.clear}));
+    if let Err(error) = app.run(&effect.clear.command, serde_json::json!({"clear": effect.clear.params.clear})) {
+        app.set_status(error, true);
+    }
 }
 
 pub(crate) fn has_effect(app: &SolveApp) -> bool {
@@ -125,7 +127,16 @@ pub(crate) fn escape(app: &mut SolveApp, repeat: bool) -> bool {
     false
 }
 
+/// Reconcile before shortcut routing so a vanished native popup cannot own Escape invisibly.
+pub(crate) fn reconcile(app: &mut SolveApp, ctx: &egui::Context) {
+    let items: Vec<_> = app.session.status_items().iter().filter_map(|effect| presentation(app, effect)).collect();
+    let members =
+        if app.preferences.viewport_status_summary && items.len() >= 3 { items.into_iter().map(|item| item.id).collect() } else { Vec::new() };
+    app.viewport_status.reconcile_summary(ctx, members);
+}
+
 pub(crate) fn show(app: &mut SolveApp, ctx: &egui::Context, viewport: egui::Rect) {
+    reconcile(app, ctx);
     if !enabled(app) {
         app.viewport_status.open_key = None;
         return;
@@ -154,13 +165,31 @@ pub(crate) fn show(app: &mut SolveApp, ctx: &egui::Context, viewport: egui::Rect
         return;
     }
     let legend = crate::viewport::analysis_legend_data(app);
-    let actions = ui_kit::viewport_status_row(ctx, free, &items, &mut app.viewport_status, |ui, _| {
+    let key_contents = |ui: &mut egui::Ui, _: &str| {
         if let Some((title, along, rows)) = &legend {
             ui_kit::analysis_key(ui, title, along.as_deref(), rows);
         }
-    });
+    };
+    let newest = app.session.newest_status_item(&eligible(app)).map(|effect| identity(&effect));
+    let actions = if app.preferences.viewport_status_summary && items.len() >= 3 {
+        ui_kit::viewport_status_summary(ctx, free, &items, newest.as_deref().unwrap_or_default(), &mut app.viewport_status, key_contents)
+    } else {
+        ui_kit::viewport_status_row(ctx, free, &items, &mut app.viewport_status, key_contents)
+    };
+    dispatch(app, actions);
+}
+
+/// Resolve requests against current represented effects, never a menu-open snapshot.
+pub(crate) fn dispatch(app: &mut SolveApp, actions: Vec<StatusAction>) {
     for action in actions {
+        let effects: Vec<_> = app.session.status_items().into_iter().filter(|effect| presentation(app, effect).is_some()).collect();
         match action {
+            StatusAction::ClearAll => {
+                for effect in effects {
+                    clear(app, &effect);
+                }
+                app.viewport_status.open_key = None;
+            }
             StatusAction::Clear(id) => {
                 if let Some(effect) = effects.iter().find(|effect| identity(effect) == id) {
                     clear(app, effect);

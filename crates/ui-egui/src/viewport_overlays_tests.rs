@@ -1343,6 +1343,7 @@ fn section_status_and_analysis_keep_slots_clear_independently_and_filter_escape_
 #[test]
 fn section_status_preserves_legacy_three_items_and_dialog_escape_ownership() {
     let mut h = Harness::new();
+    h.app.preferences.viewport_status_summary = false;
     h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
     h.call("ui.prefs", json!({"single_surface_analysis":false}));
     h.app.run("inspect.zebra", json!({})).unwrap();
@@ -1762,4 +1763,229 @@ fn section_only_status_stays_below_preferences_for_paint_and_hit_testing() {
     assert_eq!(h.ctx.layer_id_at(at).unwrap().order, egui::Order::Middle);
     h.call("ui.click", json!({"x":at.x,"y":at.y}));
     assert!(h.app.prefs_window.open && h.app.session.section.is_some());
+}
+
+// Summary fixtures below exercise component kinds unavailable from current production producers.
+#[test]
+fn summary_component_uses_supplied_newest_and_aggregate_attention_at_three_and_four() {
+    use crate::ui_kit::{StatusItem, StatusKind, StatusPresentation, viewport_status_summary};
+    for count in [3, 4, 12] {
+        for newest_kind in [StatusKind::Mode, StatusKind::Result, StatusKind::Attention] {
+            for warning in [false, true] {
+                let ctx = crate::fonts::test_context();
+                let mut state = StatusPresentation::default();
+                let items: Vec<_> = (0..count)
+                    .map(|i| StatusItem {
+                        id: format!("summary_{i}"),
+                        kind: if i == 0 {
+                            newest_kind
+                        } else if warning && i == 1 {
+                            StatusKind::Attention
+                        } else {
+                            StatusKind::Mode
+                        },
+                        name: format!("Source {i}"),
+                        setting: format!("{i} mm"),
+                        has_key: false,
+                        editable: false,
+                    })
+                    .collect();
+                for width in [320.0, 1600.0] {
+                    let free = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0));
+                    let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(free), ..Default::default() }, |_| {
+                        viewport_status_summary(&ctx, free, &items, "summary_0", &mut state, |_, _| {});
+                    });
+                    let mut name = false;
+                    let mut more = false;
+                    let mut dot = false;
+                    let t = Tokens::get();
+                    for shape in &output.shapes {
+                        crate::test_support::each_shape(&shape.shape, &mut |shape| match shape {
+                            Shape::Text(text) if text.galley.job.text == "Source 0" => name = true,
+                            Shape::Text(text) if text.galley.job.text == format!("+{}", count - 1) => more = true,
+                            Shape::Circle(circle) if circle.fill == t.warning && circle.radius == t.space_3 => dot = true,
+                            _ => {}
+                        });
+                    }
+                    output.textures_delta.clear();
+                    assert!(name && more, "supplied newest is the first slot at every width");
+                    assert_eq!(dot, warning || newest_kind == StatusKind::Attention);
+                }
+            }
+        }
+    }
+}
+
+fn summary_three_effects() -> Harness {
+    let mut h = Harness::new();
+    h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+    h.call("ui.prefs", json!({"single_surface_analysis":false}));
+    h.app.run("inspect.zebra", json!({})).unwrap();
+    h.app.run("inspect.continuity", json!({})).unwrap();
+    h.app.run("inspect.section", json!({"plane":"XY","at":3})).unwrap();
+    assert_eq!(h.app.session.status_items().len(), 3);
+    h.frames(4);
+    h
+}
+
+#[test]
+fn summary_count_switch_is_independent_of_width_and_legacy_preference_keeps_effects() {
+    let mut h = summary_three_effects();
+    for summary in [true, false] {
+        h.call("ui.prefs", json!({"viewport_status_summary":summary}));
+        for width in [640, 1600] {
+            h.call("ui.resize", json!({"width":width,"height":900}));
+            h.frames(4);
+            assert_eq!(crate::scenario::rect_of("viewport_status:summary").is_some(), summary);
+            for effect in h.app.session.status_items() {
+                let item = crate::viewport_status::presentation(&h.app, &effect).unwrap();
+                assert_eq!(crate::scenario::rect_of(&format!("viewport_status:{}:item", item.id)).is_some(), !summary);
+            }
+        }
+    }
+    h.app.run("inspect.continuity", json!({"clear":true})).unwrap();
+    h.call("ui.prefs", json!({"viewport_status_summary":true}));
+    for width in [640, 1600] {
+        h.call("ui.resize", json!({"width":width,"height":900}));
+        h.frames(4);
+        assert!(crate::scenario::rect_of("viewport_status:summary").is_none());
+        assert_eq!(h.app.session.status_items().len(), 2);
+    }
+}
+
+#[test]
+fn summary_native_menu_escape_is_close_only_then_newest_replacement_clears_and_unfolds() {
+    let mut h = summary_three_effects();
+    let oldest = h.app.session.status_items().first().unwrap().id;
+    h.app.run("inspect.draft", json!({})).unwrap();
+    h.frames(3);
+    assert_eq!(h.app.session.status_items().first().unwrap().id, oldest);
+    let latest = h.app.session.newest_status_item(&[solidcraft_engine::status_items::StatusId::SurfaceAnalysis]).unwrap();
+    let item = crate::viewport_status::presentation(&h.app, &latest).unwrap();
+    assert!(crate::scenario::rect_of(&format!("viewport_status:{}:summary", item.id)).is_some());
+    h.step(&json!({"click":{"handle":"viewport_status:summary"}})).unwrap();
+    h.frames(3);
+    assert!(egui::Popup::is_any_open(&h.ctx));
+    assert!(crate::scenario::rect_of("menu:viewport_status_clear_all").is_some());
+    let mut previous = f32::NEG_INFINITY;
+    for effect in h.app.session.status_items() {
+        let item = crate::viewport_status::presentation(&h.app, &effect).unwrap();
+        let close = crate::scenario::rect_of(&format!("viewport_status:{}:close", item.id)).unwrap();
+        assert!(close.top() > previous, "menu order follows oldest slots rather than newest activation");
+        previous = close.top();
+    }
+    analysis_escape_relayout_frame(&mut h, |app| {
+        assert_eq!(app.session.status_items().len(), 3, "footer Esc hint is not a clear-all binding");
+    });
+    assert!(!egui::Popup::is_any_open(&h.ctx));
+    assert_eq!(h.app.session.status_items().len(), 3);
+    h.step(&json!({"key":"Escape"})).unwrap();
+    h.frames(3);
+    assert!(h.app.session.analysis.is_none());
+    assert!(h.app.session.section.is_some() && !h.app.session.continuity.is_empty());
+    assert!(crate::scenario::rect_of("viewport_status:summary").is_none());
+}
+
+#[test]
+fn summary_popup_closes_on_preference_count_and_replacement_transitions() {
+    for transition in ["disable", "count", "replace", "zero"] {
+        let mut h = summary_three_effects();
+        h.step(&json!({"click":{"handle":"viewport_status:summary"}})).unwrap();
+        h.frames(3);
+        assert!(egui::Popup::is_any_open(&h.ctx));
+        match transition {
+            "disable" => h.app.preferences.viewport_status_summary = false,
+            "count" => {
+                h.app.run("inspect.section", json!({"clear":true})).unwrap();
+            }
+            "replace" => {
+                h.app.run("inspect.draft", json!({})).unwrap();
+            }
+            _ => crate::viewport_status::dispatch(&mut h.app, vec![crate::ui_kit::StatusAction::ClearAll]),
+        }
+        crate::viewport_status::reconcile(&mut h.app, &h.ctx);
+        assert!(!egui::Popup::is_any_open(&h.ctx), "{transition} closes only the stale summary owner");
+        assert!(!h.app.viewport_status.owns_focus(&h.ctx));
+        h.frames(3);
+        if transition == "zero" {
+            assert!(h.app.session.status_items().is_empty());
+        } else {
+            assert!(h.app.session.analysis.is_some());
+        }
+    }
+}
+
+#[test]
+fn summary_dispatch_reconciles_current_sources_hidden_items_and_actual_clear_failures() {
+    use crate::ui_kit::StatusAction;
+    let mut h = summary_three_effects();
+    let old = h.app.session.status_items().into_iter().find(|e| e.command == "inspect.zebra").unwrap();
+    let old = crate::viewport_status::presentation(&h.app, &old).unwrap().id;
+    h.app.run("inspect.draft", json!({})).unwrap();
+    crate::viewport_status::dispatch(&mut h.app, vec![StatusAction::Clear(old)]);
+    assert!(h.app.session.analysis.is_some(), "stale identity cannot clear a replacement");
+    // The host picker blocks actual command execution before engine dispatch.
+    h.app.services.pick_open = Some(Box::new(|_| Box::pin(std::future::pending())));
+    h.app.pick_open(|_, _| {});
+    assert!(h.app.file_picker_busy());
+    crate::viewport_status::dispatch(&mut h.app, vec![StatusAction::ClearAll]);
+    assert_eq!(h.app.session.status_items().len(), 3, "failed commands never remove UI-owned copies");
+    assert!(h.app.status.as_ref().is_some_and(|(_, _, error)| *error));
+    h.app.file_picker = None;
+    h.app.preferences.viewport_section_status = false;
+    crate::viewport_status::dispatch(&mut h.app, vec![StatusAction::ClearAll]);
+    assert!(h.app.session.analysis.is_none() && h.app.session.continuity.is_empty());
+    assert!(h.app.session.section.is_some(), "footer scope is currently represented effects only");
+}
+
+#[test]
+fn summary_footer_pointer_and_native_keyboard_dispatch_clear_all_without_a_key_binding() {
+    for keyboard in [false, true] {
+        let mut h = summary_three_effects();
+        h.step(&json!({"click":{"handle":"viewport_status:summary"}})).unwrap();
+        h.frames(3);
+        if keyboard {
+            // Follow real native focus traversal rather than assigning a widget ID.
+            let footer = crate::scenario::rect_of("menu:viewport_status_clear_all").unwrap();
+            let mut reached = false;
+            for _ in 0..16 {
+                h.step(&json!({"key":"Tab"})).unwrap();
+                reached =
+                    h.ctx.memory(|memory| memory.focused()).and_then(|id| h.ctx.read_response(id)).is_some_and(|response| response.rect == footer);
+                if reached {
+                    break;
+                }
+            }
+            assert!(reached, "native Tab reaches the footer");
+            h.step(&json!({"key":"Tab", "shift":true})).unwrap();
+            assert!(h.ctx.memory(|memory| memory.focused()).and_then(|id| h.ctx.read_response(id)).is_some_and(|response| response.rect != footer));
+            h.step(&json!({"key":"Tab"})).unwrap();
+            h.step(&json!({"key":"Space"})).unwrap();
+        } else {
+            h.step(&json!({"click":{"handle":"menu:viewport_status_clear_all"}})).unwrap();
+        }
+        h.frames(3);
+        assert!(h.app.session.status_items().is_empty());
+        assert!(!egui::Popup::is_any_open(&h.ctx));
+        assert!(crate::scenario::rect_of("viewport_status:summary").is_none());
+    }
+}
+
+#[test]
+fn summary_preferences_cancel_restores_layout_independently_of_all_effect_policies() {
+    for saved in [false, true] {
+        let mut h = summary_three_effects();
+        h.call("ui.prefs", json!({"viewport_status_summary":saved}));
+        h.call("ui.prefs", json!({"open":"Interface"}));
+        h.call("ui.prefs", json!({"viewport_status_summary":!saved}));
+        analysis_escape_relayout_frame(&mut h, |app| {
+            assert_eq!(app.preferences.viewport_status_summary, saved);
+            assert_eq!(app.session.status_items().len(), 3);
+            assert!(!app.preferences.single_surface_analysis);
+            assert!(app.preferences.viewport_analysis_status && app.preferences.viewport_section_status);
+            assert!(app.preferences.persistent_ribbon_pressed);
+        });
+        h.frames(3);
+        assert_eq!(crate::scenario::rect_of("viewport_status:summary").is_some(), saved);
+    }
 }

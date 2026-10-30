@@ -1,0 +1,66 @@
+{
+  "en": {
+    "prefs.viewport_status_summary": "Fold viewport status items",
+    "prefs.viewport_status_summary_help": "Fold three or more viewport status items into one summary badge. Disable to keep every item in the full row.",
+    "ui.viewport_status_summary_clear": "Turn everything off",
+    "ui.viewport_status_summary_heading": "In this view",
+    "ui.viewport_status_summary_label": "{name} and {count} more items",
+    "ui.viewport_status_summary_more": "+{count}"
+  },
+  "ar": {
+    "prefs.viewport_status_summary": "تلخيص عناصر حالة منفذ العرض",
+    "prefs.viewport_status_summary_help": "اجمع ثلاثة عناصر أو أكثر لحالة منفذ العرض في شارة ملخّصة واحدة. عطّل الخيار لإبقاء كل عنصر في الصف الكامل.",
+    "ui.viewport_status_summary_clear": "إيقاف كل شيء",
+    "ui.viewport_status_summary_heading": "في هذا العرض",
+    "ui.viewport_status_summary_label": "{name} و{count} عناصر أخرى",
+    "ui.viewport_status_summary_more": "+{count}"
+  },
+  "de": {
+    "prefs.viewport_status_summary": "Status im Ansichtsfenster zusammenfassen",
+    "prefs.viewport_status_summary_help": "Drei oder mehr Statuselemente in einer Zusammenfassung anzeigen. Deaktivieren, um jedes Element in der vollständigen Zeile zu behalten.",
+    "ui.viewport_status_summary_clear": "Alles ausschalten",
+    "ui.viewport_status_summary_heading": "In dieser Ansicht",
+    "ui.viewport_status_summary_label": "{name} und {count} weitere Elemente",
+    "ui.viewport_status_summary_more": "+{count}"
+  },
+  "he": {
+    "prefs.viewport_status_summary": "סיכום פריטי מצב בחלון התצוגה",
+    "prefs.viewport_status_summary_help": "קיבוץ שלושה פריטי מצב או יותר לתג סיכום אחד. כיבוי האפשרות משאיר כל פריט בשורה המלאה.",
+    "ui.viewport_status_summary_clear": "כיבוי הכול",
+    "ui.viewport_status_summary_heading": "בתצוגה זו",
+    "ui.viewport_status_summary_label": "{name} ועוד {count} פריטים",
+    "ui.viewport_status_summary_more": "+{count}"
+  },
+  "ja": {
+    "prefs.viewport_status_summary": "ビューポートの状態項目をまとめる",
+    "prefs.viewport_status_summary_help": "3 個以上の状態項目を 1 つのサマリーバッジにまとめます。無効にすると、すべての項目を従来の行に表示します。",
+    "ui.viewport_status_summary_clear": "すべて解除",
+    "ui.viewport_status_summary_heading": "このビュー内",
+    "ui.viewport_status_summary_label": "{name} と他 {count} 項目",
+    "ui.viewport_status_summary_more": "+{count}"
+  },
+  "ko": {
+    "prefs.viewport_status_summary": "뷰포트 상태 항목 요약",
+    "prefs.viewport_status_summary_help": "상태 항목이 3개 이상이면 하나의 요약 배지로 표시합니다. 비활성화하면 모든 항목을 기존 행에 표시합니다.",
+    "ui.viewport_status_summary_clear": "모두 끄기",
+    "ui.viewport_status_summary_heading": "이 뷰에서",
+    "ui.viewport_status_summary_label": "{name} 외 {count}개 항목",
+    "ui.viewport_status_summary_more": "+{count}"
+  },
+  "vi": {
+    "prefs.viewport_status_summary": "Tóm tắt các mục trạng thái khung nhìn",
+    "prefs.viewport_status_summary_help": "Gộp từ ba mục trạng thái khung nhìn trở lên thành một huy hiệu tóm tắt. Tắt để giữ mọi mục trong hàng đầy đủ.",
+    "ui.viewport_status_summary_clear": "Tắt tất cả",
+    "ui.viewport_status_summary_heading": "Trong khung nhìn này",
+    "ui.viewport_status_summary_label": "{name} và {count} mục khác",
+    "ui.viewport_status_summary_more": "+{count}"
+  },
+  "zh": {
+    "prefs.viewport_status_summary": "汇总视口状态项",
+    "prefs.viewport_status_summary_help": "将三个或更多视口状态项折叠为一个汇总徽章。禁用后，所有项目仍显示在完整的一行中。",
+    "ui.viewport_status_summary_clear": "全部关闭",
+    "ui.viewport_status_summary_heading": "此视图中",
+    "ui.viewport_status_summary_label": "{name} 和其他 {count} 项",
+    "ui.viewport_status_summary_more": "+{count}"
+  }
+}
