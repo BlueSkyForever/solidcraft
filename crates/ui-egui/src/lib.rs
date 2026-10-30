@@ -102,6 +102,7 @@ pub(crate) mod joint_handles;
 pub mod keymap;
 mod length_input;
 mod linked_source;
+pub mod locale_labels;
 #[cfg(test)]
 mod loft_rails_dialog_tests;
 #[cfg(test)]
@@ -300,6 +301,7 @@ pub mod view_pick;
 pub mod viewport;
 mod viewport_layout;
 mod viewport_status_fixture;
+pub mod web_fonts;
 pub mod workspace;
 
 use std::sync::mpsc::Receiver;
