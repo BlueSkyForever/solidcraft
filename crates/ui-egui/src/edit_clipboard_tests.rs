@@ -754,9 +754,7 @@ fn pasting_on_a_group_puts_the_copy_in_it() {
         assert!(item.enabled);
         run_item(app, &item, egui::Pos2::ZERO);
     };
-    let holds = |app: &crate::SolveApp, group: u64, key: &str| {
-        app.session.doc.browser_groups.iter().any(|g| g.id == group && g.has_item(key))
-    };
+    let holds = |app: &crate::SolveApp, group: u64, key: &str| app.session.doc.browser_groups.iter().any(|g| g.id == group && g.has_item(key));
     select(&mut app, json!({"type": "body", "name": "Cube"}));
     assert!(super::copy(&mut app));
     paste_on(&mut app, bodies);

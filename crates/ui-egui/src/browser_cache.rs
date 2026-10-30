@@ -27,7 +27,7 @@ pub(super) struct Node {
 
 /// A row of a folder or group: an item, or a group with its own rows.
 pub(super) enum Row {
-    Item(Entry),
+    Item(Box<Entry>),
     Group(Group),
 }
 

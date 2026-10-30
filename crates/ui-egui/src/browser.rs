@@ -1666,7 +1666,8 @@ fn occurrence_rows_inner(
         acts.menu = Some((p, Target::Occurrence { path: path.to_vec() }));
     }
     if let Some(resp) = &r.resp
-        && let Some(d) = drop_target(ui, resp, |d: &Drag| d.comp != placement.component && d.folder != "construction" && d.groups.is_empty(), DropMark::Box)
+        && let Some(d) =
+            drop_target(ui, resp, |d: &Drag| d.comp != placement.component && d.folder != "construction" && d.groups.is_empty(), DropMark::Box)
     {
         acts.drop = Some(DropAction::Component { to: placement.component, folder: d.folder, keys: d.keys.clone() });
     }
@@ -2411,7 +2412,7 @@ fn arrange(doc: &solidcraft_engine::doc::Document, comp: u64, folder: &str, pref
         let mut seen = Vec::new();
         for e in &g.items {
             match e {
-                BrowserEntry::Item(k) => rows.extend(take(k).map(Row::Item)),
+                BrowserEntry::Item(k) => rows.extend(take(k).map(|e| Row::Item(Box::new(e)))),
                 BrowserEntry::Group(c) if left > 0 && doc.browser_group(*c).is_some_and(|c| c.parent == Some(id)) && !seen.contains(c) => {
                     seen.push(*c);
                     rows.extend(build(doc, comp, folder, prefix, *c, left - 1, take).map(Row::Group));
@@ -2430,10 +2431,8 @@ fn arrange(doc: &solidcraft_engine::doc::Document, comp: u64, folder: &str, pref
         Some(cache::Group { id, key: format!("{prefix}/g{id}"), label: format!("{} ({count})", g.name), count, rows })
     }
     let tops = doc.child_groups(comp, folder, None);
-    let mut groups: Vec<Option<cache::Group>> = tops
-        .iter()
-        .map(|id| build(doc, comp, folder, prefix, *id, solidcraft_engine::doc::MAX_GROUP_NESTING, &mut take))
-        .collect();
+    let mut groups: Vec<Option<cache::Group>> =
+        tops.iter().map(|id| build(doc, comp, folder, prefix, *id, solidcraft_engine::doc::MAX_GROUP_NESTING, &mut take)).collect();
     let mut rows = Vec::new();
     let mut place_group = |rows: &mut Vec<Row>, id: u64| {
         if let Some(i) = tops.iter().position(|t| *t == id)
@@ -2446,14 +2445,14 @@ fn arrange(doc: &solidcraft_engine::doc::Document, comp: u64, folder: &str, pref
         for e in order {
             match e {
                 BrowserEntry::Group(id) => place_group(&mut rows, *id),
-                BrowserEntry::Item(k) => rows.extend(take(k).map(Row::Item)),
+                BrowserEntry::Item(k) => rows.extend(take(k).map(|e| Row::Item(Box::new(e)))),
             }
         }
     }
     for id in &tops {
         place_group(&mut rows, *id);
     }
-    rows.extend(pool.into_iter().flatten().map(Row::Item));
+    rows.extend(pool.into_iter().flatten().map(|e| Row::Item(Box::new(e))));
     rows
 }
 
@@ -2593,10 +2592,21 @@ fn folder_rows_at(
         // from another component's folder move into this component, as a drop on its row does
         // (#3270: the Bodies folder looked like the place to drop a body, and took nothing).
         if let Some(resp) = &r.resp
-            && let Some(d) = drop_target(ui, resp, |d: &Drag| d.folder == fstatic && (d.comp == comp || (d.folder != "construction" && d.groups.is_empty())), DropMark::Box)
+            && let Some(d) = drop_target(
+                ui,
+                resp,
+                |d: &Drag| d.folder == fstatic && (d.comp == comp || (d.folder != "construction" && d.groups.is_empty())),
+                DropMark::Box,
+            )
         {
             acts.drop = Some(if d.comp == comp {
-                DropAction::Order { comp, folder: fstatic, keys: d.keys.clone(), groups: d.groups.clone(), order: order_before(&data.top_order, &d.entries(), None) }
+                DropAction::Order {
+                    comp,
+                    folder: fstatic,
+                    keys: d.keys.clone(),
+                    groups: d.groups.clone(),
+                    order: order_before(&data.top_order, &d.entries(), None),
+                }
             } else {
                 DropAction::Component { to: comp, folder: d.folder, keys: d.keys.clone() }
             });
@@ -2694,13 +2704,24 @@ fn folder_level(
             }) {
                 let before = BrowserEntry::Group(id);
                 acts.drop = Some(match (zone, holder) {
-                    (DropMark::Box, _) => DropAction::Move { comp, folder: fstatic, keys: d.keys.clone(), groups: d.groups.clone(), group: Some(id), before: None },
-                    (DropMark::Above, Some(h)) => {
-                        DropAction::Move { comp, folder: fstatic, keys: d.keys.clone(), groups: d.groups.clone(), group: Some(h), before: Some(before) }
+                    (DropMark::Box, _) => {
+                        DropAction::Move { comp, folder: fstatic, keys: d.keys.clone(), groups: d.groups.clone(), group: Some(id), before: None }
                     }
-                    (DropMark::Above, None) => {
-                        DropAction::Order { comp, folder: fstatic, order: order_before(top, &d.entries(), Some(&before)), keys: d.keys.clone(), groups: d.groups.clone() }
-                    }
+                    (DropMark::Above, Some(h)) => DropAction::Move {
+                        comp,
+                        folder: fstatic,
+                        keys: d.keys.clone(),
+                        groups: d.groups.clone(),
+                        group: Some(h),
+                        before: Some(before),
+                    },
+                    (DropMark::Above, None) => DropAction::Order {
+                        comp,
+                        folder: fstatic,
+                        order: order_before(top, &d.entries(), Some(&before)),
+                        keys: d.keys.clone(),
+                        groups: d.groups.clone(),
+                    },
                 });
             }
         }
@@ -2900,13 +2921,21 @@ fn entry_row(
     let fits = |d: &Drag| {
         let doc = &app.session.doc;
         let level = group.map_or(0, |g| doc.group_level(g));
-        d.groups.iter().all(|g| group.is_none_or(|h| !doc.group_within(h, *g)) && level + doc.group_height(*g) <= solidcraft_engine::doc::MAX_GROUP_NESTING)
+        d.groups
+            .iter()
+            .all(|g| group.is_none_or(|h| !doc.group_within(h, *g)) && level + doc.group_height(*g) <= solidcraft_engine::doc::MAX_GROUP_NESTING)
     };
     if let Some(d) = drop_target(ui, resp, |d: &Drag| d.comp == comp && d.folder == folder && !d.keys.contains(&e.key) && fits(d), DropMark::Above) {
         let before = BrowserEntry::item(&e.key);
         acts.drop = Some(match group {
             Some(g) => DropAction::Move { comp, folder, keys: d.keys.clone(), groups: d.groups.clone(), group: Some(g), before: Some(before) },
-            None => DropAction::Order { comp, folder, order: order_before(top, &d.entries(), Some(&before)), keys: d.keys.clone(), groups: d.groups.clone() },
+            None => DropAction::Order {
+                comp,
+                folder,
+                order: order_before(top, &d.entries(), Some(&before)),
+                keys: d.keys.clone(),
+                groups: d.groups.clone(),
+            },
         });
     }
 }
@@ -2953,7 +2982,9 @@ fn drop_target_zone(ui: &egui::Ui, resp: &egui::Response, accept: impl Fn(&Drag,
     if resp.dnd_hover_payload::<Drag>().is_some_and(|d| accept(&d, zone)) {
         match zone {
             DropMark::Above => ui.painter().hline(r.x_range(), r.top(), Stroke::new(2.0, t.accent)),
-            DropMark::Box => ui.painter().rect_stroke(r.shrink(0.5), t.radius_sm.saturating_sub(1), Stroke::new(1.5, t.accent), egui::StrokeKind::Inside),
+            DropMark::Box => {
+                ui.painter().rect_stroke(r.shrink(0.5), t.radius_sm.saturating_sub(1), Stroke::new(1.5, t.accent), egui::StrokeKind::Inside)
+            }
         };
     }
     if !egui::DragAndDrop::has_payload_of_type::<Drag>(ui.ctx()) {
@@ -2991,7 +3022,11 @@ fn occurrence_sibling(app: &SolveApp, d: &OccurrenceDrag, target: u64) -> Option
 }
 
 /// While a matching placement drag hovers the row, mark a drop before it; on release, the payload.
-fn occurrence_reorder_target(ui: &egui::Ui, resp: &egui::Response, accept: impl Fn(&OccurrenceDrag) -> bool) -> Option<std::sync::Arc<OccurrenceDrag>> {
+fn occurrence_reorder_target(
+    ui: &egui::Ui,
+    resp: &egui::Response,
+    accept: impl Fn(&OccurrenceDrag) -> bool,
+) -> Option<std::sync::Arc<OccurrenceDrag>> {
     if resp.dnd_hover_payload::<OccurrenceDrag>().is_some_and(|d| accept(&d)) {
         ui.painter().hline(resp.rect.x_range(), resp.rect.top(), Stroke::new(2.0, Tokens::get().accent));
     }
