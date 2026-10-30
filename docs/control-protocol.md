@@ -382,6 +382,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `browser_bodies_folders` (`several` (default): a component with one body and no groups lists it straight under the component in the browser, without a Bodies folder; `always`; `never`: components list their bodies and groups straight under them, and the folder's menu items are on the component's menu; the design's own Bodies folder, and one hidden with its eye, always show; #4217)
 - `check_updates` (default true; [updates](book/src/guide/updates.md))
 - `color_vision` (`off` (default), `protan`, `deutan`, `tritan`: colour vision modes, #778)
+- `cut_buttons` (default false: on, Extrude Cut, Revolve Cut, Sweep Cut and Loft Cut (`solid.extrude_cut`, `solid.revolve_cut`, `solid.sweep_cut`, `solid.loft_cut`) are in MODEL › CREATE's menu and in command search, and the first two are buttons right after Extrude and Revolve; off, none of them shows, and they stay commands for scripts and shortcuts, #7905)
 - `default_units`
 - `dialog_buttons` (`bottom` (default), `top`: a feature dialog's OK, Cancel and Apply sit in its title row instead of under its inputs, #6708; the buttons keep their handles, and `dialog:close` is then Cancel's)
 - `dialog_place` (`edge` (default) or `left_column`: command dialogs open in the left column in place of the browser and the History, #6707)
