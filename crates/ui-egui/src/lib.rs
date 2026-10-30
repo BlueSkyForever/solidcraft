@@ -34,6 +34,7 @@ pub mod delete;
 pub mod design_properties;
 pub mod dialog_column;
 mod dialog_descriptor;
+mod dialog_focus;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
@@ -2607,6 +2608,8 @@ impl SolveApp {
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         value_step::set_enabled(ui.ctx(), self.preferences.step_values);
+        dialogs::prepare_tab(self, ui.ctx());
+        dialog_focus::prepare_active(ui.ctx());
         let t0 = now_ms();
         // The first frames draw with the bundled faces while the system's CJK, Hangul and Thai
         // faces are read on a thread; the fonts are installed again once they are there.
